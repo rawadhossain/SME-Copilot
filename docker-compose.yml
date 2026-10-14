@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: sme
+      POSTGRES_PASSWORD: sme # local dev only, synthetic data
+      POSTGRES_DB: sme
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sme -d sme"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  pgdata:
