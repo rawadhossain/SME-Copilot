@@ -1,4 +1,4 @@
-# Progress log
+﻿# Progress log
 
 ## Batch 1: scaffold (2026-10-15)
 
@@ -15,3 +15,204 @@
 - Fonts now local (next/font/local, Geist files committed under src/app/fonts); no external CDN.
 - DB hardening (ADR-004): app role, append-only action_records with triggers, SHA-256 hash chain plus verify script, currencies table, business_id and indexes.
 - Verified: install, typecheck, lint, migration, chain verification, dev server.
+
+## Batch 2: data to work with (2026-10-15)
+
+- Fresh-checkout typecheck fixed: the `typecheck` script is now `next typegen && tsc --noEmit`. Next 16's `next typegen` writes the `LayoutProps` / `RouteContext` types that were missing until a dev server or build had run. Verified after deleting `.next`, `tsconfig.tsbuildinfo` and `next-env.d.ts`.
+- zod added. Money boundary (JSON schema, string/bigint conversion) and decimal parser in `src/lib/money`; sanity script extended (parsing, rejection cases, JPY, round trip).
+- Migration 0002: `counterparties.profile` (jsonb, default empty) and `transactions.source_id` with a unique index.
+- Synthetic company seed (`bun run db:seed`, `db:reset-seed`) and fixtures (CSV, purchase order, supplier quote). ADR-006.
+- CSV import (`bun run import:csv`) with validation, de-duplication and reconciliation. ADR-007.
+- Read-only view: `GET /api/business/[id]/summary` and `/demo`.
+- Verified: seed twice (second run is a no-op), reset-seed gives identical fixtures, CSV imported into a second business with matching totals and reconciliation, re-import adds 0 rows, a file with bad rows reports them per row, seed refuses a non-local host, chain check passes, typecheck, lint, API and /demo respond.
+- Not built, by design: cash engine, agent, LLM calls, document processing.
+
+## Batch 3: cash engine and timeline (2026-10-15)
+
+- Pure engine in `src/engine` (13-week forecast with provenance, reserve and shortage detection, scenario overlays, downside variant, driver attribution), a DB loader and run persistence. ADR-008.
+- `CommitmentEvent` (zod, in `src/domain`) is the scenario shape the future document reader will output. The sample order (PO plus supplier quote) is expressed as three events in `src/engine/samples/grocery-order.ts`.
+- API: `GET /api/business/[id]/forecast?variant=baseline|downside&delayDays=N`, `POST /api/business/[id]/scenario`. Page: `/demo/forecast` (inline SVG chart, weekly table, lines by provenance, Apply sample order button, downside toggle, ranked drivers).
+- Migration 0003: `businesses.reserve_minor/reserve_currency`, `invoices.paid_on`, `bills.paid_on`, forecast run metadata, `forecast_items`. The seed now sets the reserve (GBP 28,000.00 = one fortnightly payroll) and paid dates. The database was rebuilt from scratch (`docker compose down -v`, migrate, seed) to verify migrations 0000 to 0003 on a clean volume; the two Batch 2 test businesses are gone.
+- Added beyond the brief: run-rate projection of not-yet-issued invoices and bills (ADR-008 explains why; it can be switched off).
+- Bugs found and fixed while verifying: the event schema threw (HTTP 500) on a decimal amount or an impossible date instead of returning 400.
+- Results on the seeded data (as of 2026-10-15, reserve GBP 28,000.00):
+  - Baseline: lowest closing balance GBP -3,909.38 in week 13; first below the reserve in week 8 (closing 13,490.79, shortfall 14,509.21); below zero in weeks 9, 11 and 13. Not "healthy" as the demo story wanted; nothing was tuned (see ADR-008).
+  - With the sample order: lowest GBP -99,909.38 in week 13; below the reserve from week 1 (closing 13,060.00, shortfall 14,940.00); below zero from week 5 (-48,461.58) through week 13; weeks 6 and 7 are -38,792.70 and -57,101.85; deepest shortfall 127,909.38. The GBP 180,000 receipt falls on day 95, after the 13 weeks.
+  - Ranked drivers (improvement of the lowest balance if removed): Kestrel balance 67,200.00; Northgate paying 22 days late 56,321.27; Kestrel deposit 28,800.00; Pennine 2 days late 5,533.54; Harbourline 3 days late 2,426.02.
+- Verified: typecheck, lint, production build, migrations on a clean volume, seed, `bun run check:engine` (both parts), both endpoints (including 400/404/422 cases), `/demo/forecast` server-rendered. Not verified: clicking the buttons in a real browser (the client code calls the same endpoints that were tested).
+- Not built, by design: agent, LLM calls, document extraction, actions, action log entries from the engine.
+
+## Batch 3B: demo story correction (2026-10-15)
+
+- `scripts/seed-synthetic.ts` reshaped (ADR-006 addendum): flatter history, Northgate pays about 11 days late, three planted overdue invoices (GBP 33,350.00), monthly Northgate invoices. The seed was wiped and rebuilt with `db:reset-seed` (only the seeded business, its derived rows and its saved forecast runs); the fixtures CSV was regenerated (87 rows, reconciles, re-import adds 0). The purchase order and supplier quote are unchanged in content.
+- `horizonWeeks` (default 13, max 26) added to the engine, loader and both endpoints; `/demo/forecast` shows 13 weeks for the baseline and 20 once the sample order is applied, with a "Recovery" line.
+- `scripts/engine-sanity.ts` now asserts the story (baseline above the reserve, downside above -10,000 and below the reserve, order minimum -90k to -60k, first negative week 5 to 7, receipt inside 20 weeks with balance above the reserve, three overdue invoices 30k to 35k with ages 12, 25 and 41 days, lateness ranges).
+- Numbers (as of 2026-10-15, reserve GBP 28,000.00):
+  - Baseline, 13 weeks: lowest GBP 34,772.86 in week 10; never below the reserve.
+  - Downside (+14 days): lowest GBP 360.86 in week 12; first below the reserve in week 2. **Misses the GBP 10k to 25k target by about GBP 10.6k**, but is above -GBP 10,000.
+  - Sample order, 13 weeks: lowest GBP -61,227.14 in week 10; first negative week 5 (-982.12). Below zero in weeks 5, 6, 9, 10 and 13 (within 20 weeks).
+  - Sample order, 20 weeks: the GBP 180,000 receipt lands in week 14; that week closes at GBP 139,059.32 and every later week stays above GBP 139k.
+  - Overdue invoices: 3, total GBP 33,350.00.
+  - Drivers of the order minimum: Kestrel balance 67,200.00; Northgate paying 11 days late 64,208.06; Kestrel deposit 28,800.00.
+- Verified: typecheck, lint, `bun run check:engine` (both parts), both endpoints (default, downside, 26 weeks, 400 on 27 and 40 weeks, 20-week scenario), `/demo/forecast` renders, CSV import into a second business (87 rows, 0 errors, reconciles; re-import 0 new rows), `db:verify-chain`. Not verified: clicking the page buttons in a browser.
+
+## Batch 4: sandbox world (2026-10-15)
+
+- Polish of /demo/forecast first: round chart ticks with a labelled 0 line, "lowest" label moved off the lines (with a halo), x-axis title no longer clipped, friendly driver labels with raw ids behind a "details" element, and a sequential attribution view (adds up to the total) shown first with the stand-alone view collapsed. Method in the ADR-008 addendum. No engine numbers changed.
+- Migration 0004: six sandbox tables with business_id indexes, grants for the app role, CHECK constraints (statuses, positive amounts, inbound messages must be untrusted).
+- `src/sandbox`: personality profile (zod), structured proposal protocol (zod discriminated union), pure simulators, and the operations (sendProposal, schedulePayment, executeDuePayments, submitApplication, getSandboxState). ADR-009.
+- Seed: personalities for the counterparties, a hostile fifth counterparty (Quickbuy Retail), a sandbox bank account with the GBP 42,000.00 balance, approved payees for Kestrel and Clearwater only. The tuned history is unchanged (same business id 50d04f73-3186-40b1-96fe-46f478ea6134, same 87 transactions).
+- Engine: pure `applyTermChanges` for the levers; lever results are printed by `bun run check:engine`.
+- API: GET /api/business/[id]/sandbox plus POST proposal, payment, execute, application. Page: /demo/sandbox (manual console; inbound text labelled UNTRUSTED).
+- `getDefaultBusinessId` now prefers the newest synthetic business that has recurring commitments (the leftover test businesses were hiding the demo business).
+- Checks: `bun run check:sandbox` (new) and `bun run check:engine`.
+- Lever results (13-week horizon): no change min -GBP 61,227.14 (week 10), first negative week 5; supplier deposit 15% unchanged; balance deferred 30 days min unchanged, first negative week 9; buyer deposit 20% min -GBP 25,227.14, first negative week 9; 20% plus deferral the same; invoice finance 80%/2% min -GBP 982.12 in week 5, first negative week 5 (week 5 is before the advance arrives in week 6), about +GBP 79k around week 10. These match the earlier hand arithmetic.
+- Sandbox state in the demo database now contains my API test activity (one agreed Kestrel deposit cut, a Northgate counter, one executed GBP 28,800 payment to Kestrel, one invoice-finance offer). `bun run db:reset-seed` clears it.
+
+## Batch 5: mandate, gate, approvals, action pipeline (2026-10-15)
+
+- Housekeeping: db:reset-seed run first (announced); CLAUDE.md now has the exact no-git rule and the rule that src/agent never imports the owner-signing or approval code (enforced by ESLint). Verified the rule fires with a probe file (deleted).
+- Migrations 0005 (drop the unused Batch 1 mandates and action_proposals, which were empty) and 0006 (new mandates, action_proposals, approvals, grants, CHECK constraints, and the action_records.proposal_id foreign key re-pointed). ADR-010, ADR-011.
+- `src/gate`: mandate schema, Ed25519 owner-signing module (private key), public-key verification, request schema, the pure `evaluate`. `src/actions`: propose, approve (owner), execute, verify (separate), cancel, payee changes (owner), evidence and read views, owner console, HTTP mapping. `src/sandbox` gained `cancelPayment`.
+- Seed: signed mandate for the demo business. Same business id 50d04f73-3186-40b1-96fe-46f478ea6134, same data.
+- API: POST/GET /api/business/[id]/actions, POST /api/actions/[id]/approve|execute|verify|cancel, GET /api/business/[id]/mandate, GET /api/business/[id]/evidence, POST /api/business/[id]/console (owner console through the pipeline), POST payee bank-details and approve (owner). The Batch 4 sandbox routes that wrote directly were removed; /sandbox/execute is now the bank's own job.
+- Pages: /demo/actions (mandate, actions with timelines, approve/execute/verify/cancel, "Try to break it"), /demo/sandbox (now through the pipeline).
+- Checks: `bun run check:gate` (28-row gate table, mandate tampering, end to end, tamper tests), plus the earlier `check:engine`, `check:sandbox`, `db:verify-chain`.
+- Via the API on the demo business: unapproved payee, 70,001 payment, 4% discount, floor breach, payroll purpose were all denied and logged; replaying a denied action with the same key and a larger amount returned 409; the manual console did not bypass a denial. The demo business is otherwise untouched (bank still 42,000.00), but it now has log records, so `db:reset-seed` will refuse; use `bun run db:wipe`.
+
+## Batch 6: AI gateway and safe document reading (2026-10-15)
+
+- Housekeeping decisions recorded (24-hour expiry, dev keys, mandate lifecycle deferred, owner login later; open questions 18 to 21 resolved). Proposal expiry now uses PROPOSAL_TTL_HOURS (default 24).
+- Migration 0007: llm_calls, documents, extractions (+ grants, constraints).
+- `src/ai`: provider-agnostic gateway on the Vercel AI SDK 7 and the OpenAI-compatible provider; env-only config; generateStructured (zod, bounded retry, no tools) and a minimal generateWithTools; record and replay by request hash (missing recording fails loudly; secrets refused); scripted mock provider; llm_calls telemetry. ADR-012. `bun run llm:smoke` for you to run with a real key (not run by me).
+- `src/ingest/documents`: quarantined extraction, deterministic validation, independent suspicious-text scan, deterministic mapper, store, owner-only confirm and reject. ADR-013. `src/actionlog` now exports the log writer; new events document.extraction_confirmed, document.extraction_rejected, security.suspicious_text_detected.
+- Fixtures: injected-purchase-order.md (synthetic security test fixture), scripted recordings in fixtures/llm-recordings (regenerate with `bun run llm:record-scripted`).
+- API: POST /api/business/[id]/documents, GET /api/business/[id]/extractions/[extractionId], POST /api/extractions/[id]/confirm and /reject (owner), GET /api/extractions/[id]/events. Page: /demo/documents.
+- Results (replay of scripted recordings): purchase order and quote extract with no flags and map to events identical to the hand-built sample (2026-10-15 deposit -28,800.00 high; 2026-11-12 balance -67,200.00 medium; 2027-01-18 receipt +180,000.00 medium; only source differs: document vs manual). Scenario from the confirmed events: lowest -GBP 61,227.14 in week 10, first negative week 5 (same as the sample). Injected order: 10 suspicious passages (scan plus the reader), pending not confirmed, events unchanged. Fabricated total rejected (field_rejected, failed), inconsistent quote flagged (inconsistent_totals, failed), unrecorded text fails loudly in replay.
+- Checks: `bun run check:extract` (new), plus check:money, check:engine, check:sandbox, check:gate and db:verify-chain all pass (chain 304 records).
+- Not done, by design: any live model call, the agent loop, planning, negotiation by an LLM. I did not use the API key you pasted in chat; please rotate it.
+
+## Batch 7: planning agent, investigate and propose plans (2026-10-15)
+
+- Read-only agent: it can investigate and propose plans; it cannot execute, negotiate, send, schedule or approve (Batch 8). Layering enforced by ESLint on `src/agent`; the orchestrator is `src/actions/agent-run.ts`. Probe import of `@/actions` from `src/agent` fails lint as intended; the probe file is deleted.
+- Built: lever and plan model (`src/domain/plan.ts`), pure plan search (`src/engine/plans`, ADR-014), read-only tools, prompt, prose-number check, deterministic fallback (`src/agent`, ADR-015), tool loop in `src/ai/agent-loop.ts`, scripted good and bad mock agents, migration 0008 (agent_runs, agent_steps, plans), API (POST/GET /api/business/[id]/agent/runs, GET /api/agent/runs/[id]), page /demo/agent (load sample commitment helper, step timeline, do-nothing baseline card, plan cards, no approve or execute buttons).
+- Finished in the resumed session: `check:agent` script in package.json, /demo/agent, docs (batch sequence, ADR-014, ADR-015, CLAUDE.md planner rules, security model, open questions 26 to 29, READMEs).
+- Verified (mock and replay only, no live model): lint, typecheck, `bun run check:agent` (new), check:money, check:engine, check:sandbox, check:gate, check:extract, db:verify-chain (462 records). Migration 0008 was already applied; no migrate, reset or wipe was run. `/demo/agent` returns 200 and renders; I did not click through it in a browser.
+- check:agent results: Batch 4 lever regression identical through simulateLevers; search over 71 combinations (do nothing: lowest -GBP 61,227.14 in week 10, first negative week 5); recommended plan is buyer 20% deposit plus invoice finance 80% (lowest GBP 35,017.88 in week 5, never negative, cost GBP 2,880.00, 2 counterparties); bad scripted run rejected and fell back to 3 deterministic plans; provider-unavailable run gives the same deterministic plans; no proposals, approvals, payments, threads or applications created; no injected or profile text in any step; injected-order plans identical to the clean run.
+- Fix during the resume: the isolation comparison in check:agent compared plan ids that hash per-business counterparty ids; it now maps ids to counterparty names first.
+- Note: the default LLM mode is replay when recordings exist, so the page's run uses the deterministic fallback unless LLM_MODE=live with the mock provider (scripted AI agent). Not yet exercised through the page.
+- Live-mode check (mock provider): with LLM_MODE=live LLM_PROVIDER=mock, the page's own API flow (extract and confirm the two sample documents, POST agent/runs) returned HTTP 200, completed, plan_source ai, 3 plans. It ran against a leftover "Agent Sanity B" clone, not the demo business, because getDefaultBusinessId preferred the newest synthetic business; it now skips businesses named "Agent Sanity %". check:agent also gained an assertion that invented prose numbers (GBP 250,000, 37%) never reach stored plans.
+
+## Batch 7 live verification (2026-10-15, gpt-4o-mini, record then replay)
+
+- Budget: 10 live HTTP calls in total (limit 25): 3 extraction, 7 agent steps. Tokens 55,233 prompt + 2,529 completion, about USD 0.01 at gpt-4o-mini list prices (0.15 / 0.60 per million; the price is my assumption, check your invoice).
+- Extraction: the first try failed the validator: the model wrote amounts as "96,000.00 GBP" (the scripted outputs never did). The validator was right; the fix was the prompt (amount descriptions now say plain number, no currency). Second try: both documents pass, all amounts verified, mapped events equal the hand-built sample. The quote shows 2 suspicious passages (a warning) from the real model/scan on a benign synthetic quote; the PO shows none. depositTerms on the PO is "missing (not stated)", as expected.
+- Agent: first attempt failed before any request (AI SDK 7 rejects system messages inside `messages`; the loop now uses `instructions` through the shared `toSdkPrompt`). Then: 7 steps, 13 tool calls, source ai, 2 plans (the prompt asks for 2 to 3), both validated, every metric equals an independent engine recomputation. Quality note: the model's plans still leave the balance negative (lowest -GBP 7,143.36 and -GBP 7,227.14) while the deterministic search finds plans that never go negative. The system works as designed (the model proposes, code computes), but a real model is not a better planner than the search here. Open question 28 updated.
+- Replay with LLM_API_KEY empty: extraction and agent results identical to the recorded run, zero live calls. The replayed tool-call count was 15 against 13 live (plans identical); not investigated.
+- Recordings: no "sk-", "Authorization" or "Bearer" in either folder. Live recordings now live in fixtures/llm-recordings-live (LLM_RECORDINGS_DIR); the scripted ones stay in fixtures/llm-recordings. Reason: recordings are keyed by request, not by model, so a live record had overwritten the scripted ones. The three old scripted recordings were deleted because the extraction schema text changed.
+- Also fixed: live token usage now uses the SDK totalUsage (it summed only the last step before). Script: scripts/live-verify.ts (record / replay; works on a clone "Agent Live ... (SYNTHETIC)"; the demo business was not touched).
+
+## Batch 7.5: small fixes (2026-10-15)
+
+- Test clones: businesses.is_test (migration 0009, additive; existing "Sanity" and "Agent Live" businesses flagged, not deleted). getDefaultBusinessId ignores them; the demo pages show the demo business 50d04f73 (Mercer & Vale). All check scripts and live-verify set the flag. The 20 flagged businesses stay in the database ("Import Test Co" is not flagged; it has no recurring commitments so it is never the default).
+- Plan quality: prompt now says search first and copy levers; new guard (ADR-015 addendum) keeps a below-zero AI plan from being the recommendation when a feasible plan exists. check:agent gained a weak scripted agent and guard cases (replaced recommendation, flagged and demoted plans, reordering).
+- Live confirmation (gpt-4o-mini, record): 6 calls (cap 8, one run). The model called search_plans and chose from its results: 3 plans, all validated, none below zero (lowest GBP 46,410.00, 51,210.00 and 56,010.00; closing GBP 157,748.76; cost GBP 3,600.00), every metric equal to the engine. Replay with the key blanked: identical plans, 14 tool calls on both sides, zero live calls. Cumulative live calls for Batch 7 and 7.5: 16 HTTP calls.
+- Replay count (15 vs 13): cause was only visibility. The model sent counterpartyId null in two simulate_levers calls; the AI SDK rejected them before our code ran, so live did not log them while replay did. Live now logs them. Replay behaviour was correct.
+- Suspicious-text warning on the benign quote: both passages came from the model's own report (source "model"), not from the pattern scan: "Balance (67,200.00 GBP) payable on shipment..." and "Production starts when the deposit is received." The model over-reported ordinary payment terms. The detector was not changed; the owner sees a warning and decides. Open question 24 still applies.
+- Checks: lint, typecheck, check:money, check:engine, check:sandbox, check:gate, check:extract, check:agent, db:verify-chain (759 records) all pass.
+
+## Batch 8a: plan authorisation, negotiation, execution, verification (2026-10-15)
+
+**Done**
+- Migration 0010 (applied): `plan_authorisations`, `plan_executions`, `action_proposals.authorisation_id`, sandbox statuses withdrawn and accepted. The app role can update only the status and result columns of the two new tables.
+- Gate: new kinds `sandbox.accept_offer` and `sandbox.withdraw`; GateState gained optional applications and threads. Sandbox ops: acceptApplicationOffer, withdrawApplication, withdrawThread (ESLint write-lists updated).
+- Owner signing: `signPlanAuthorisation` in `src/gate/owner-signing.ts`; message in `owner-signing-types.ts`; public verification in `verify.ts`.
+- `src/actions`: plan-terms (pure: exact requests, bounds, reply classification, coverage), plan-authority (public-key checks), plan-authorise (owner-only propose/approve), plan-exec (executor: negotiate, commit, compensate), plan-verify (independent verifier), plan-read. `executeAction` and `verifyAction` accept a plan authorisation as authority; withdrawals need no approval.
+- API: POST /api/business/[id]/plan-authorisations (owner route), POST /api/plan-authorisations/[id]/execute, GET /api/plan-authorisations/[id] (status, actions, log trail, verification). No UI.
+- ADR-016, ADR-017, ADR-018; security model, open questions 17, 29, 31 to 35, READMEs, CLAUDE.md commands.
+
+**Verified** (`bun run check:plan`, mock provider, is_test clones): happy path (4 actions all verified, plan verified, recomputed = promised), idempotency (second run refused, nothing changed), forced mismatch (loud, logged), plan beyond the mandate denied at signing, mandate replaced or tampered after signing refused, edited plan / edited terms / edited expiry refused, expired authorisation refused, supplier rejection (needs_replan, offer withdrawn, nothing accepted), out-of-terms counter not accepted, in-bound counter accepted, failure before the finance take-up rolled back, lint probe of the layering. Also passing: lint, typecheck, check:money, check:engine, check:sandbox, check:gate, check:extract, check:agent, db:verify-chain.
+
+**Live confirmation** (gpt-4o-mini, record then replay; `scripts/live-plan.ts`): 6 live calls (one per loop step), 38,900 prompt and 1,010 completion tokens, only the planning run; documents were read by the mock provider. The model's three plans all asked the buyer for a 20% deposit, so executing plan 1 ended needs_replan, as designed (the test buyer caps deposits at 10%). A second authorisation of the same plan with a signed 10-point buyer-deposit tolerance accepted the buyer's 10% counter and committed, and verification FAILED loudly (lowest balance GBP 17,017.88 against GBP 35,017.88 promised). Replay with the key blanked: identical plans, a second execution refused, stored statuses and verifications identical, zero live calls. A full re-execution cannot be replayed on the same business (the sandbox already holds it, by design); only the planning step involves the model. Recordings contain no key patterns.
+
+**Not done / left**
+- Scheduling the supplier payments in the sandbox (deviation, open question 31).
+- Re-planning after a reject, out-of-terms counter or failed verification; contingencies (8b).
+- Shortage trigger and extra levers (9). Owner login and approve/execute UI (10). Evidence export and submission docs (11).
+- Execution resume after a crash is implemented (idempotent step keys) but not tested.
+- `db:reset-seed` still refuses on a business with log records; use `bun run db:wipe`.
+
+## Batch 8b: real execution, agreed-terms verification, re-planning (2026-10-15)
+
+**Done**
+- Migration 0011 (applied): `sandbox_receipts`; `agent_runs` gained `parent_run_id`, `round`, `constraints`, `lifecycle`, `successor_run_id`.
+- Sandbox: `scheduleReceipt`, `cancelReceipt`, `executeDueReceipts`; the bank tick credits receipts before paying (ESLint write-lists updated).
+- Gate: `sandbox.schedule_receipt`; `sandbox.withdraw` also cancels scheduled payments and receipts; forecast-aware payment check (`projection` in GateState, `projectedLowest`); state loader builds the projection from the engine (books-only flows), backed receipts and scheduled payments. ADR-019.
+- Executor: after the take-up it schedules the implied receipts then payments (each through gate, execute, per-action verification, log); plan payments stay scheduled; compensation withdraws them first. Second confirmation carried in the signed terms (`confirmations`).
+- Verifier (`plan-verify.ts`): expected outcome from the agreed terms recorded in the log, actual from the sandbox state, schedule check, and a labelled promise-versus-agreed difference. ADR-020. Failed verification handling: ADR-022.
+- Re-planning: `src/domain/constraints.ts`, constraint-aware search/tools/bounds/validation/prompt in the agent, `src/actions/replan.ts`, `POST /api/plan-authorisations/[id]/replan`; status API returns run lifecycle (`needs_replan`, `replanned` + successor, `exhausted`, `executed`, `verification_failed`). Max 2 rounds. ADR-021.
+- Seed demo mandate: per-payment GBP 80,000, daily GBP 85,000 (already-seeded database unchanged).
+- Docs: ADR-019 to 022, security model, open questions (31, 33, 34, 35 closed; 29, 32, 36, 37 open), READMEs, `docs/later-hardening.md`.
+
+**Verified** (testing policy: one happy and one failure check per section, in `bun run check:plan`): section 1 happy (4 payments/receipts scheduled and verified, GBP 76,800 balance payment allowed), failure (GBP 79,000 unbacked payment denied by the projected balance); section 2 happy (buyer counter inside the signed tolerance, verified against the agreed terms, labelled "worse than planned"), failure (edited agreed term fails loudly); section 3 happy (cap learned, re-plan, new authorisation, executed and verified), failure (limit of 2 rounds gives exhausted with the best option); section 4 (status API shows verification_failed). The 8a scenarios still pass, with rollback now also covering scheduled receipts. Also passing: lint, typecheck, check:money, check:engine, check:sandbox, check:gate, check:extract, check:agent, db:verify-chain.
+
+**Live confirmation** (gpt-4o-mini, record then replay, `scripts/live-plan.ts`; 10 live calls in total, the cap):
+- Story A (6 calls, model plans the whole thing): the model's two plans had no buyer deposit, so attempt 1 (defer 14 days + finance 80%) completed with receipts and payments scheduled and verification passing. It did not exercise the buyer cap.
+- Story B (4 calls): the first plan came from the deterministic planner (buyer 20% + finance) because the budget no longer allowed a model-planned first run (disclosed). Negotiation hit the buyer's 10% cap, the structured constraint (buyer max 10%) was stored, the real model re-planned in 4 steps (3 plans, all respecting the cap), the owner signed the new plan, execution agreed 10% buyer deposit + 14 days deferral + finance, scheduled 3 receipts and 1 payment, and verification passed (all metrics equal, schedule ok, "agreed terms give the outcome the plan promised").
+- Replay with the key blanked: both stories identical (plans, constraints, re-plan, stored statuses, re-verification), zero live calls. Story A's first-run comparison was done by eye (its state file was not written before the failed assertion); the plans and numbers match the record output.
+- Recordings contain no key patterns.
+
+**Not done / left**
+- Batch 9: shortage trigger, chase and early-payment levers, scoreboard. Batch 10: owner login and UI (approve, execute, re-plan buttons). Batch 11: evidence export, submission docs.
+- Everything in `docs/later-hardening.md`.
+- The seeded demo database still has the old 70,000 mandate; re-seed with `bun run db:wipe` (destroys local data) or add a signed mandate version 2.
+
+## Batch 9: overdue fix, chase and early-payment levers, shortage trigger, scoreboard (2026-10-15)
+
+**Done**
+- **Section 0.** `bun run mandate:v2` signed mandate v2 for the demo business with the dev owner key (GBP 80,000.00 per payment, GBP 85,000.00 per day, all proposal kinds incl. `buyer.chase_payment`); v1 inactive; one `mandate.version_signed` log record; nothing wiped. Dry-run: the GBP 76,800.00 payment passes the limits and, mid-plan, the projection. Buyer counter + finance: ADR-025 (signed maximum invoice; the executor re-submits the application for the recomputed amount).
+- **Section 1.** Overdue invoices: explicit configurable collection delay (14 days, 30 days when more than 30 days overdue; `OVERDUE_*` env), ADR-023. Batch 4 lever lows unchanged; weeks 1 to 5 are tighter (the GBP 33,350.00 now arrives in weeks 3 to 6).
+- **Section 2.** Levers `chase_overdue` and `early_payment_discount` (domain, engine adjustments and cost, search grid, mandate bounds, proposal `buyer.chase_payment`, simulator, gate dry-run, signed bounds and tolerances, execution, rollback, verification, re-plan constraints). ADR-024. No parallel paths.
+- **Section 3.** Shortage detector and trigger (`src/actions/shortage.ts`), `GET/POST /api/business/[id]/shortage-check`, automatic check after an extraction is confirmed, idempotent by forecast hash, old runs `superseded` (migration 0012). ADR-026.
+- **Section 4.** Scoreboard (`src/actions/scoreboard.ts`, `GET /api/business/[id]/scoreboard`). ADR-027.
+- Docs: ADR-023 to 027, security model, open questions (38 to 42 new), `docs/demo-walkthrough.md` (new, shortage story), `docs/later-hardening.md`, READMEs.
+- Scripts: `bun run mandate:v2`, `scripts/live-shortage.ts`. `check:agent` now expects a shortage trigger to plan.
+
+**Verified** (one happy and one failure check per section): engine (overdue dates and notes; invalid config falls back; chase and early-payment adjustments, cost), plan-sanity (section 0 counter + finance executes and verifies, above-maximum not covered; chase + early payment executes and verifies, 90% discount denied at signing; shortage detect, same shortage same run, changed forecast supersedes, healthy forecast no run; scoreboard for a re-planned and an exhausted commitment). Final sweep: lint, typecheck, all check:* scripts and db:verify-chain.
+
+**Live confirmation** (gpt-4o-mini, record then replay, `scripts/live-shortage.ts`): 9 live calls in total (5-step shortage plan, 4-step re-plan; cap 10). The detector flagged `below_zero` (lowest -GBP 61,227.14 in week 10, first negative week 5); the model returned 3 plans, two with the chase lever; I chose one with a new lever. Attempt 1: the chase lever was agreed (14 days) but the buyer capped the deposit at 10%, so the plan stopped as needs_replan and everything was withdrawn. The model re-planned inside the learned cap; attempt 2 (14-day deferral, 10% buyer deposit, 80% finance; no new lever in the final plan) executed (3 receipts, 1 payment scheduled) and verified (all metrics equal, schedule ok). Scoreboard: 1 executed, 1 verified, 2 owner approvals. Replay with an empty key: identical plans, statuses, re-verification and scoreboard numbers, zero live calls. The new levers were therefore exercised live in negotiation and rolled back, not in the final executed plan; they are executed and verified in check:plan.
+
+**Not done / left**
+- Batch 10: owner login and the decision-room UI (approve, execute, re-plan, shortage buttons). Batch 11: evidence export, hardening, submission docs.
+- Everything in `docs/later-hardening.md`. Open questions 29, 32, 36, 37, 38 to 42.
+- The seeded demo has no shortage run yet: confirm the two fixture documents (or `POST shortage-check`) to create one.
+
+**Addendum (end of Batch 9).** A flaky `check:agent` (once in five runs) was found and fixed: with several candidate buyers the search broke ties between equal plans by a hash of random counterparty ids, so two businesses could rank equal plans differently; candidates are now ordered by customer name and ties by generation order (`SearchedPlan.order`). Note: the live recordings of Batches 7 to 8b (`live-plan.ts`, `live-verify.ts`) were recorded before the new levers existed, so their agent requests no longer match and those two scripts will not replay; the Batch 9 recording (`live-shortage.ts`) replays identically. The scripted recordings for the check scripts are unaffected.
+
+## Batch 10: owner login and the decision room (2026-10-15)
+
+**Works today.** Sign in at `/login` (owner@mercer-vale.example / Ledger-Owner-2026; second approver finance@mercer-vale.example / Ledger-Approver-2026; `bun run auth:seed` creates them). Screens under `/room`: Cash desk, Commitments (documents, validator verdicts, suspicious-text acknowledgement, explicit confirm), Shortage case (live timeline, plan comparison with mandate checks, chart, plain-language signing with password step-up and second approver, per-counterparty and per-action status, rollback, re-plan with learned constraints and round count, exhausted state, verification promised vs agreed vs actual), Scoreboard, Mandate & safety (limits in plain language, "try to break it"), Evidence (timeline, filter by case, chain verify). Local fonts, no CDNs. Older `/demo` pages still work (a small fetch wrapper adds the CSRF token).
+**Run the demo offline** (mock provider, no key, no network): `bun run demo`, open http://localhost:3000, sign in, click "Start a fresh demo" (a new flagged clone; nothing existing is touched), then Commitments: use both samples, confirm both; open the case; sign plan 1 (buyer 20% + finance + chase), run it (the buyer caps the deposit at 10%), re-plan, sign the new plan, run it; see verification, scoreboard, evidence. The planner shows "fallback used" when no recording matches.
+**Checks.** `bun run e2e:smoke` drives the whole story through the real routes (sign-in security, CSRF, rate limit, clone, documents, shortage, preview, step-up and second approver, execute, re-plan, execute, verify, scoreboard, evidence, page renders and component renders with the real data); `LIVE=1` runs it with the real model. Plus lint, typecheck, db:verify-chain and all check:* scripts.
+**Offline story result.** The executed plan after the re-plan was supplier deferral + 10% buyer deposit + finance + **chase** (agreed, scheduled, verified).
+**Live confirmation (6 calls, the cap).** Two planning runs with AGENT_MAX_STEPS=3 each: the model did not submit valid plans within 3 steps either time, so the deterministic fallback planned (shown as "fallback used"); everything after (sign, negotiate, buyer cap, re-plan, execute, verify, scoreboard) passed. So a real-model plan was NOT exercised in this batch; the earlier live runs (Batches 7 to 9) did.
+**Changes outside the UI.** Planner search now keeps one chase/early-payment plan among the top plans when it is as safe (so the owner always sees one); `weeksBelowZero` added to plan metrics; proxy-level auth; migrations 0012 (superseded) and 0013 (owner login).
+**Left.** Batch 11: evidence export and submission docs. Passkey/hardware signing (see security-model.md). Visual QA in a real browser was not possible here: the screens were checked by server-side rendering with real data and by build, not by eye, so expect small layout fixes. Open the app once and look.
+
+## Batch 11: reliability, canonical recordings, evidence export, hardening, submission pack (2026-10-15)
+
+**Reliability (why the model failed at 3 steps).** From the recorded traces: the model always ran reads (step 1), `search_plans` (step 2), then `check_plan_feasibility` once per plan (step 3) and only then `submit_plans` (step 4), so a 3-step cap stopped it one step short; the prompt also told it to verify everything. Fix at the cause: the mandate check now travels inside every `search_plans` result, the prompt asks for reads + search in step 1 and submit in step 2 (`agent.plan.v2`), 8 parallel tool calls per step, and the search returns the best plan of each different kind (it used to return five variations of one). Result with the real model: valid plans in 3 of 3 planning runs (shortage plan 2 steps, re-plan likewise), never the fallback.
+**Canonical recordings.** `fixtures/llm-recordings-live` is now the single canonical set (5 files): sample-document reading, the shortage plan and the re-plan. Planner decisions are keyed and stored with counterparty NAMES instead of ids, so a recording made on one demo clone replays on any other clone. `LLM_REUSE=1` (with `LLM_MODE=record`) serves existing recordings and calls the model only for missing ones. `bun run demo` replays them (empty key, no network); `REPLAY=1 bun run e2e:smoke` proves it: extraction, shortage plan from the model, Northgate wants at least 1.5% (we offered 1%), re-plan from the model, signed, executed with an early-payment lever, verified. 9 stale recordings were removed (copies in the session scratchpad only).
+**Live calls used: about 8 of 12** (document reading 3, planning runs and re-plan about 5). `RECORD=1 bun run e2e:smoke` refreshes the set.
+**Evidence export.** `GET /api/business/[id]/cases/[runId]/export?format=json|html` (buttons on the case page). Contains the case, plans, signed mandate versions and authorisations with signatures, actions with gate results, verification, scoreboard entry, the whole business log with head hash, and the owner PUBLIC key; no private key, passwords, sessions or raw documents (the log now stores only fingerprints of suspicious text). Re-verify offline: `node scripts/verify-export.mjs file.json|file.html` (26 to 29 checks: signatures, bound hashes, every record's text and hash chain); the HTML verifies itself in a browser (needs Ed25519 in Web Crypto; not tested in a real browser). Tampering with a log record, the signed terms or a signature is detected (tested).
+**Hardening.** Approve, console and payee re-approval now need the password (step-up); cookie flags (HttpOnly, SameSite=Strict, Path, Max-Age), CSRF, rate limit and the new step-up checked through the running app by the smoke; secret scan of the repo: the dev owner key appears only in `.env.example` (by design, development key), no API key or password anywhere, key patterns only in the test that checks recordings are refused; server output, recordings and exports contain none. `bun audit`: 1 high (braces via eslint-config-next), 1 moderate (esbuild via drizzle-kit), both dev tooling. Keyboard: skip link, focusable chart points, native dialog; tablet: tables scroll, nav wraps. A real bug found on the way: the Evidence page used snake_case field names and showed blanks; fixed.
+**Submission pack.** Root `README.md` (idea, diagram, offline demo, checks, safety model, limits, next), `docs/demo-script.md` (5 minutes). The competition-specific requirements were not pasted into the prompt, so nothing beyond these was produced: send them and I will map them.
+**Left.** Real-browser QA of the decision room and the self-verifying HTML; passkey/hardware signing; recordings depend on the seed date and sample documents; see `docs/later-hardening.md`.
+
+## Batch 12: owner-first product pass
+- Plain-language navigation: Today, Orders & quotes, Decisions, Results, Your limits, Proof. Jargon (mandate, gate, levers, case) removed from owner-facing copy.
+- "Your next step" bar on every screen, derived from saved state (no model). "How it works" card on an empty Today.
+- Today: ranked "What is causing the gap" (engine `attributeDrivers`, exposed via getRoom `drivers`).
+- Decision page: outcome banner (fixed/needs re-plan/no plan fits), agent timeline collapsed.
+- Verified in headless Edge: full flow (fresh demo to verified plan, break-it, chain verify) passes; lint 0 errors, typecheck clean.
+- Not done: attack-lab (hostile document) screen; real-browser check of the HTML export.
