@@ -19,22 +19,35 @@ Full strategy: docs/product-strategy.md. Decisions: docs/decisions.md. Open ques
 - Synthetic data is always labelled synthetic.
 - No real credentials, no real money.
 - Never depend on a Google or other external CDN (fonts, scripts, analytics, images). Everything is served locally.
-- All external AI calls go through a provider-agnostic, OpenAI-compatible gateway. Provider UNKNOWN; no LLM code yet.
+- Modules under src/agent must never import the owner-signing module or the approval-signing code (enforced by an ESLint rule). Only src/gate/owner-signing.ts reads the owner private key.
+- Only src/actions calls sandbox write operations; the permission gate decides, the pipeline executes, a separate verifier checks.
+- All LLM calls go through src/ai (provider-agnostic, OpenAI-compatible, record/replay). Provider UNKNOWN. Never import a model SDK anywhere else.
+- Extraction calls never get tools. Model output never directly drives money or limits; only the gate, the mandate and the owner's approval do.
+- Never paste or write an API key into a file the repository tracks, a doc or a chat. Keys live in the local git-ignored .env only.
 
-## Working rules
+## Working rules (standing)
 
-- Do only what the current prompt asks. Do not invent requirements.
-- Mark unknowns as UNKNOWN.
-- Record meaningful choices in docs/decisions.md.
-- Keep verification light and proportionate: type check, lint, run it once, one happy path.
-- No large test suites for now.
-- Never run git commit or push (the team handles git).
+- Do only what the current prompt asks. Mark unknowns as UNKNOWN.
+- Never run git commands (not even read-only); the owner does all commits and pushes.
+- Never read, print or open .env; run things through the bun scripts.
+- Announce any destructive command and say why. Never wipe or reset the demo data or the append-only log.
+- Develop against mock/replay providers. Live model calls only when a prompt allows them, within the stated budget, recorded to fixtures/llm-recordings-live.
+- Testing is light: at most one happy-path and one failure-path check per major piece, reuse existing helpers, no regression suites. Deeper items get one line in docs/later-hardening.md. Before finishing: lint, typecheck, run it once.
+- Docs are minimal: do NOT write ADRs, READMEs or open-question entries unless a decision would otherwise be lost (then one short line in docs/decisions.md). At the end of a batch update only docs/progress.md, kept short.
+- Quality over speed for the product itself; ask only on a real design conflict, with options and a recommendation.
+- If usage runs low, stop at a clean point and update docs/progress.md first.
 - Never stop processes by image name or run machine-wide kill commands. Stop only the specific process you started (by PID).
 
 ## Commands
 
-bun run dev | lint | typecheck | db:up | db:migrate | db:generate | db:verify-chain | check:money (Bun is the package manager; Next.js runs on Node, no --bun)
+bun run dev | lint | typecheck | db:up | db:migrate | db:generate | db:verify-chain | db:seed | db:reset-seed | import:csv | check:money | check:engine | check:sandbox | check:gate | check:extract | check:agent | check:plan | llm:smoke | llm:record-scripted | mandate:keygen (Bun is the package manager; Next.js runs on Node, no --bun)
 
 ## Next.js note
 
 This Next.js version may differ from training data. Check node_modules/next/dist/docs/ before using unfamiliar APIs.
+
+## Planner rules (Batch 7)
+
+- The planner never receives raw document text or raw counterparty free text; only structured data.
+- All numbers shown to the owner are computed by deterministic code; model prose never supplies numbers.
+- src/agent is read-only (ESLint): no src/actions, sandbox writes, owner-signing, approval or database code. The orchestrator is src/actions/agent-run.ts.
