@@ -39,6 +39,8 @@ export interface Transaction {
   description: string;
   counterpartyId?: Id;
   source: string;
+  /** Deterministic de-duplication identifier. */
+  sourceId?: string;
 }
 
 export type InvoiceStatus = "draft" | "sent" | "paid" | "overdue" | "void";
@@ -113,6 +115,8 @@ export interface Counterparty {
   role: CounterpartyRole;
   /** Simulated counterparties are always declared as such. */
   isSimulated: boolean;
+  /** Behaviour / personality settings. Empty until counterparty personalities are built. */
+  profile: Record<string, unknown>;
 }
 
 /** The owner-signed limits, enforced in code by the gate. */
@@ -161,3 +165,4 @@ export interface ActionRecord {
 }
 
 export type { Currency };
+export * from "./commitment-event";
