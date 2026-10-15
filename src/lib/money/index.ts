@@ -80,3 +80,15 @@ export function formatMoney(m: Money, exp: number): string {
   const frac = exp > 0 ? "." + (abs % scale).toString().padStart(exp, "0") : "";
   return `${neg ? "-" : ""}${whole}${frac} ${m.currency}`;
 }
+
+export { parseDecimalToMinor, MoneyParseError } from "./parse";
+export { moneyJsonSchema, moneyToJson, moneyFromJson, type MoneyJson } from "./boundary";
+
+/** Plain decimal string for CSV/export, e.g. -123456 with exp 2 -> "-1234.56". No grouping, no currency. */
+export function formatDecimal(amountMinor: bigint, exp: number): string {
+  const neg = amountMinor < 0n;
+  const abs = neg ? -amountMinor : amountMinor;
+  if (exp === 0) return `${neg ? "-" : ""}${abs}`;
+  const scale = 10n ** BigInt(exp);
+  return `${neg ? "-" : ""}${abs / scale}.${(abs % scale).toString().padStart(exp, "0")}`;
+}
