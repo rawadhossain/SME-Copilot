@@ -1,5 +1,9 @@
-// Placeholder for the deterministic cash engine.
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface CashEngine {
-  // Intentionally empty until the engine batch.
-}
+// Public surface of the pure cash engine. loader.ts and store.ts (database) are imported separately.
+export * from "./types";
+export * from "./dates";
+export { buildForecast, computeLateness } from "./forecast";
+export { runScenario, compare, type Comparison, type ScenarioResult, type Variant } from "./scenario";
+export { attributeDrivers, type Driver, type DriverAnalysis } from "./drivers";
+export * from "./json";
+export { applyTermChanges, adjustmentsOf, type TermChanges } from "./term-changes";
+export * from "./plans";
