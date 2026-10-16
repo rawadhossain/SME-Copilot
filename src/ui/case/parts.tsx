@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Btn, Card, Chip, Th, type Tone } from "../kit";
 import { constraintText, date, dateTime, leverText, money, pct, week } from "../format";
 
-export const nameOf = (names: Record<string, string>, id: string) => (names[id] ?? "a counterparty").replace(" (SYNTHETIC)", "");
+export const nameOf = (names: Record<string, string>, id: string) => (names[id] ?? "the other side").replace(" (SYNTHETIC)", "");
 
 // ---------------------------------------------------------------- stepper
 export function Stepper({ steps }: { steps: { label: string; state: "done" | "active" | "todo" | "bad" }[] }) {
@@ -64,7 +64,7 @@ export function Timeline({ run }: { run: any }) {
         {run.status === "running" && <li className="pulse pl-5 text-sm text-accent">working…</li>}
       </ol>
       {steps.length > 8 && <button className="mt-2 text-xs text-accent underline" onClick={() => setAll(!all)}>{all ? "Show fewer steps" : `Show all ${steps.length} steps`}</button>}
-      <p className="mt-2 text-xs text-ink-soft">These are tool calls and checks recorded as the planner worked. The planner never receives raw document text or counterparty free text.</p>
+      <p className="mt-2 text-xs text-ink-soft">These are tool calls and checks recorded as the planner worked. Your assistant never sees the raw text of documents or messages.</p>
     </div>
   );
 }
@@ -118,7 +118,7 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
             {run.plans.map((p: any) => (
               <td key={p.id} className={`px-2 py-2 text-xs ${selected === p.id ? "bg-accent-soft/50" : ""}`}>
                 {(p.plan.warnings ?? []).map((w: string, i: number) => <p key={i} className="text-caution">⚠ {w}</p>)}
-                {p.plan.proseFlagged && <p className="text-caution">⚠ The agent&apos;s wording contained numbers no tool produced; those sentences were removed.</p>}
+                {p.plan.proseFlagged && <p className="text-caution">⚠ The assistant&apos;s wording contained numbers no tool produced; those sentences were removed.</p>}
                 {!(p.plan.warnings ?? []).length && !p.plan.proseFlagged && <span className="text-ink-soft">none</span>}
               </td>
             ))}</tr>
@@ -137,7 +137,7 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
       </table>
       {run.plans.map((p: any, i: number) => selected === p.id && (
         <div key={p.id} className="mt-4 rounded-xl border border-line bg-white/60 p-4 text-sm">
-          <p className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-soft">Agent&apos;s explanation of plan {i + 1} <Chip tone="neutral">{p.plan.source === "owner" ? "adjusted by you; every number is recomputed by the engine" : `written by the ${p.plan.source === "ai" ? "AI" : "planner"}; numbers are not taken from it`}</Chip></p>
+          <p className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-soft">Assistant&apos;s explanation of plan {i + 1} <Chip tone="neutral">{p.plan.source === "owner" ? "adjusted by you; every number is recomputed by the engine" : `written by the ${p.plan.source === "ai" ? "AI" : "planner"}; numbers are not taken from it`}</Chip></p>
           <p className="font-medium">{p.plan.title}</p><p className="text-ink-soft">{p.plan.rationale}</p>
           <details className="mt-2"><summary className="cursor-pointer text-xs text-accent">Assumptions</summary><ul className="mt-1 list-disc pl-5 text-xs text-ink-soft">{(p.plan.assumptions ?? []).map((a: string, k: number) => <li key={k}>{a}</li>)}</ul></details>
         </div>
@@ -166,12 +166,14 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
   const a = auth.authorisation, ex = auth.execution;
   const out = ex?.outcome;
   const rolled = out?.compensated?.length > 0;
-  const stateTone: [Tone, string] = ex ? (ex.status === "completed" ? ["good", "Executed and verified"] : ex.status === "needs_replan" ? ["caution", "Stopped: waiting for your decision"] : ex.status === "rolled_back" ? ["danger", "Rolled back"] : ex.status === "verification_failed" ? ["danger", "Verification failed"] : ex.status === "failed" ? ["danger", "Failed"] : ["accent", "Running"]) : a.status === "authorised" ? ["accent", "Signed, waiting to run"] : a.status === "denied" ? ["danger", "Denied at signing"] : a.status === "expired" ? ["danger", "Expired"] : ["neutral", a.status];
+  const stateTone: [Tone, string] = ex ? (ex.status === "completed" ? ["good", "Executed and verified"] : ex.status === "needs_replan" ? ["caution", "Stopped: waiting for your decision"] : ex.status === "rolled_back" ? ["danger", "Rolled back"] : ex.status === "verification_failed" ? ["danger", "Verification failed"] : ex.status === "failed" ? ["danger", "Failed"] : ["accent", "Running"]) : a.status === "authorised" ? ["accent", "Signed, waiting to run"] : a.status === "awaiting_second" ? ["caution", "Waiting for a second approver"] : a.status === "declined" ? ["danger", "Second approver declined"] : a.status === "denied" ? ["danger", "Denied at signing"] : a.status === "expired" ? ["danger", "Expired"] : ["neutral", a.status];
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Chip tone={stateTone[0]}>{stateTone[1]}</Chip>
-        <span className="text-sm text-ink-soft">Signed by {a.approvedBy ?? "–"} · expires {dateTime(a.expiresAt)} · limits version {a.mandateVersion}</span>
+        {a.status === "awaiting_second"
+          ? <span className="text-sm text-ink-soft">Confirmed by {a.firstConfirmedName ?? "the owner"}. A <b>different</b> approver must sign in and confirm it before anything is sent · expires {dateTime(a.expiresAt)}</span>
+          : <span className="text-sm text-ink-soft">Signed by {a.approvedBy ?? "–"} · expires {dateTime(a.expiresAt)} · limits version {a.mandateVersion}</span>}
         {a.status === "authorised" && <Btn busy={busy} onClick={onExecute} className="ml-auto">Run the plan</Btn>}
       </div>
       {(a.letters || a.signatureImage) && (
@@ -195,7 +197,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
       )}
       {out?.branches?.length > 0 && (
         <table className="w-full text-sm">
-          <thead><tr><Th>Counterparty</Th><Th>What we asked</Th><Th>Answer</Th><Th>Terms</Th></tr></thead>
+          <thead><tr><Th>Who</Th><Th>What we asked</Th><Th>Answer</Th><Th>Terms</Th></tr></thead>
           <tbody>
             {out.branches.map((b: any) => { const [label, tone] = branchState(b); return (
               <tr key={b.index} className="border-t border-line align-top">
@@ -209,7 +211,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
       )}
       {out?.scheduled?.length > 0 && (
         <div>
-          <h4 className="mb-1 text-sm font-medium">Scheduled in the sandbox bank</h4>
+          <h4 className="mb-1 text-sm font-medium">Scheduled in the practice bank</h4>
           <ul className="space-y-1 text-sm">{out.scheduled.map((s: any) => <li key={s.id} className="flex items-center gap-2"><Chip tone={s.withdrawn ? "neutral" : s.kind === "receipt" ? "good" : "accent"}>{s.kind}</Chip><span className="num">{money(s.amountMinor, cur)}</span><span className="text-ink-soft">on {date(s.date)}</span>{s.withdrawn && <span className="text-xs text-ink-soft">cancelled</span>}</li>)}</ul>
           <p className="mt-1 text-xs text-ink-soft">They stay scheduled until the bank&apos;s end-of-day job, so the whole plan can still be withdrawn.</p>
         </div>
@@ -218,9 +220,9 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
       {out?.failure && <p className="text-sm text-danger">Stopped at “{out.failure.step}”: {out.failure.reason}</p>}
       {auth.actions?.length > 0 && (
         <details>
-          <summary className="cursor-pointer text-sm text-accent">Every action ({auth.actions.length}): gate decision, execution, verification</summary>
+          <summary className="cursor-pointer text-sm text-accent">Every action ({auth.actions.length}): safety check, execution, verification</summary>
           <table className="mt-2 w-full text-sm">
-            <thead><tr><Th>Action</Th><Th>Gate</Th><Th>Status</Th></tr></thead>
+            <thead><tr><Th>Action</Th><Th>Safety check</Th><Th>Status</Th></tr></thead>
             <tbody>
               {auth.actions.map((x: any) => (
                 <tr key={x.id} className="border-t border-line"><td className="py-1.5 pr-3">{ACTION_LABEL[x.kind] ?? x.kind}{x.payload?.counterpartyId ? ` · ${nameOf(names, x.payload.counterpartyId)}` : ""}</td>
@@ -239,14 +241,14 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
 export function ReplanPanel({ run, constraints, names, onReplan, onRevise, onRelease, busy, maxRounds = 2 }: { run: any; constraints: any[]; names: Record<string, string>; onReplan: () => void; onRevise: () => void; onRelease: () => void; busy: boolean; maxRounds?: number }) {
   const left = maxRounds - run.round;
   return (
-    <Card tone="caution" title="A counterparty did not accept your terms" subtitle="Agreements already reached are kept on hold. Nothing is committed or paid until you decide and sign.">
-      <p className="mb-2 text-sm font-medium">What the counterparties told us (structured answers only):</p>
+    <Card tone="caution" title="Someone did not accept your terms" subtitle="Agreements already reached are kept on hold. Nothing is committed or paid until you decide and sign.">
+      <p className="mb-2 text-sm font-medium">What they told us (structured answers only):</p>
       <ul className="mb-3 space-y-1 text-sm">
         {constraints.length === 0 && <li className="text-ink-soft">No usable constraint was learned.</li>}
         {constraints.map((c, i) => <li key={i} className="flex gap-2"><span className="text-caution" aria-hidden>●</span>{constraintText(c, nameOf(names, c.counterpartyId))}</li>)}
       </ul>
-      <p className="mb-3 text-sm text-ink-soft">You can revise the terms yourself (their answers are filled in; terms you leave unchanged stay agreed, and only the ones you change are asked again), ask the agent to plan again (this withdraws the held agreements first), or withdraw everything. Either way the new plan needs <b>a new signature from you</b>; nothing runs automatically.{left <= 0 ? " The agent has used its re-plan rounds, but you can still revise the terms yourself." : ""}</p>
-      <div className="flex flex-wrap gap-2"><Btn onClick={onRevise}>Revise the terms myself</Btn><Btn variant="secondary" busy={busy} disabled={left <= 0} onClick={onReplan}>Ask the agent to re-plan</Btn><Btn variant="ghost" busy={busy} onClick={onRelease}>Withdraw everything</Btn></div>
+      <p className="mb-3 text-sm text-ink-soft">You can revise the terms yourself (their answers are filled in; terms you leave unchanged stay agreed, and only the ones you change are asked again), ask the assistant to plan again (this withdraws the held agreements first), or withdraw everything. Either way the new plan needs <b>a new signature from you</b>; nothing runs automatically.{left <= 0 ? " Your assistant has used its planning rounds, but you can still revise the terms yourself." : ""}</p>
+      <div className="flex flex-wrap gap-2"><Btn onClick={onRevise}>Revise the terms myself</Btn><Btn variant="secondary" busy={busy} disabled={left <= 0} onClick={onReplan}>Ask the assistant to plan again</Btn><Btn variant="ghost" busy={busy} onClick={onRelease}>Withdraw everything</Btn></div>
     </Card>
   );
 }
@@ -255,7 +257,7 @@ export function ExhaustedCard({ run, last, cur }: { run: any; last: any; cur: st
   const dn = run.doNothing;
   return (
     <Card tone="danger" title="No feasible plan inside your constraints" subtitle="The two re-plan rounds are used up. Nothing was left half-done.">
-      <p className="text-sm">The closest documented option was refused by a counterparty, and every other option breaks one of your limits or a constraint they told us. You decide what to do next: accept different terms, ask again later, or do nothing.</p>
+      <p className="text-sm">The closest documented option was refused by the other side, and every other option breaks one of your limits or a constraint they told us. You decide what to do next: accept different terms, ask again later, or do nothing.</p>
       {last && <p className="mt-2 text-sm"><b>Closest option:</b> {last.levers.map((l: any) => leverText(l)).join("; ")} (lowest balance <span className="num">{money(last.metrics.minBalanceMinor, cur)}</span>).</p>}
       {dn && <p className="mt-1 text-sm"><b>If you do nothing:</b> lowest balance <span className="num">{money(dn.minBalanceMinor, cur)}</span> in {week(dn.minBalanceWeek)}.</p>}
     </Card>
@@ -272,12 +274,12 @@ export function VerificationPanel({ v, cur }: { v: any; cur: string }) {
     <div className="space-y-4">
       <div className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${v.ok ? "border-good/40 bg-good-soft" : "border-danger/40 bg-danger-soft"}`} role="status">
         <Chip tone={v.ok ? "good" : "danger"}>{v.ok ? "Verification passed" : "Verification FAILED"}</Chip>
-        <p className="text-sm">{v.ok ? "An independent check recomputed your forecast from what the sandbox actually holds, and it matches what the agreed terms should give." : "The sandbox does not match what was agreed. Nothing was fixed or retried automatically: you decide."}</p>
+        <p className="text-sm">{v.ok ? "An independent check recomputed your forecast from what the practice bank actually holds, and it matches what the agreed terms should give." : "The practice bank does not match what was agreed. Nothing was fixed or retried automatically: you decide."}</p>
       </div>
       <div>
         <h4 className="mb-1 text-sm font-medium">Promised → agreed terms → actual</h4>
         <table className="w-full text-sm">
-          <thead><tr><Th>Measure</Th><Th right>Plan promised</Th><Th right>Agreed terms give</Th><Th right>Recomputed from the sandbox</Th><Th>Check</Th></tr></thead>
+          <thead><tr><Th>Measure</Th><Th right>Plan promised</Th><Th right>Agreed terms give</Th><Th right>Recomputed from the practice bank</Th><Th>Check</Th></tr></thead>
           <tbody>
             {v.metrics.map((m: any, i: number) => { const p = v.promiseVsAgreed?.metrics?.[i]; return (
               <tr key={m.name} className="border-t border-line">

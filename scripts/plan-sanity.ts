@@ -394,6 +394,42 @@ async function main() {
     assert.equal(deniedQ.status, "denied");
     console.log(`  2 chase (14 days) + early payment (15 days, 1%): agreed by the buyers, cost GBP ${(Number(planQ.metrics.totalCostMinor) / 100).toFixed(2)} from the engine, executed and verified; a 90% discount is denied at signing (${(deniedQ.gates.find((g) => g.decision === "deny")?.reasons[0] ?? deniedQ.problems[0]).slice(0, 80)})`);
 
+    // ================= Section 2b: two-person control (second approver) =================
+    {
+      const { randomUUID } = await import("node:crypto");
+      const { requestSecondApproval, confirmSecond } = await import("../src/actions/plan-authorise");
+      const U = await setup("U");
+      const bu = leverBounds(U.ctx);
+      const planU = await U.addPlan([{ kind: "chase_overdue", counterpartyId: bu.chase_overdue.candidates[0], payWithinDays: 14 }]);
+      const owner = { id: randomUUID(), name: "Alex Owner" };
+      const waiting = await requestSecondApproval(db, U.biz.id, { runId: U.runId, planId: planU.id, confirmations: 2 }, owner);
+      assert.equal(waiting.status, "awaiting_second");
+      const row0 = (await rows<{ status: string; signature: string | null; first_confirmed_name: string }>`SELECT status, signature, first_confirmed_name FROM plan_authorisations WHERE id = ${waiting.authorisationId}`)[0];
+      assert.deepEqual([row0.status, row0.signature, row0.first_confirmed_name], ["awaiting_second", null, "Alex Owner"], "after the owner's confirmation the plan waits and the system has NOT signed it");
+      await assert.rejects(executePlan(db, waiting.authorisationId), /never signed/, "nothing runs before the second approval");
+      const sam = { id: randomUUID(), name: "Sam Approver", role: "approver" };
+      await assert.rejects(confirmSecond(db, U.biz.id, waiting.authorisationId, { ...sam, id: owner.id }, "approve"), /different person/, "the same person cannot give both confirmations");
+      await assert.rejects(confirmSecond(db, U.biz.id, waiting.authorisationId, { ...sam, role: "owner" }, "approve"), /approver account/, "only an approver account can give the second approval");
+      await assert.rejects(confirmSecond(db, Q.biz.id, waiting.authorisationId, sam, "approve"), /Unknown plan authorisation/, "another business cannot confirm it");
+      const done = await confirmSecond(db, U.biz.id, waiting.authorisationId, sam, "approve");
+      assert.equal(done.status, "authorised");
+      const row1 = (await rows<{ status: string; signature: string | null; approved_by: string }>`SELECT status, signature, approved_by FROM plan_authorisations WHERE id = ${waiting.authorisationId}`)[0];
+      assert.ok(row1.status === "authorised" && row1.signature && row1.approved_by === "Alex Owner + Sam Approver", "approving makes the system sign, and both names are recorded");
+      await assert.rejects(confirmSecond(db, U.biz.id, waiting.authorisationId, sam, "approve"), /not waiting/, "it can only be confirmed once");
+      const ranU = await executePlan(db, waiting.authorisationId);
+      assert.equal(ranU.status, "completed", JSON.stringify(ranU.verification?.explanation ?? ranU.outcome.failure));
+      // Declining ends it: nothing is signed and it can never run.
+      const V = await setup("V");
+      const bv = leverBounds(V.ctx);
+      const planV = await V.addPlan([{ kind: "chase_overdue", counterpartyId: bv.chase_overdue.candidates[0], payWithinDays: 14 }]);
+      const wv = await requestSecondApproval(db, V.biz.id, { runId: V.runId, planId: planV.id, confirmations: 2 }, owner);
+      assert.equal((await confirmSecond(db, V.biz.id, wv.authorisationId, sam, "decline")).status, "declined");
+      await assert.rejects(confirmSecond(db, V.biz.id, wv.authorisationId, sam, "approve"), /not waiting/, "a declined plan cannot be approved later");
+      const rowV = (await rows<{ status: string; signature: string | null }>`SELECT status, signature FROM plan_authorisations WHERE id = ${wv.authorisationId}`)[0];
+      assert.deepEqual([rowV.status, rowV.signature], ["declined", null]);
+      console.log("  2b second approver: the owner's confirmation parks the plan unsigned; the same person, a non-approver and another business are refused; a different approver's own confirmation signs it (both names recorded) and it runs and verifies; declining ends it");
+    }
+
     // ================= Section 3: the shortage trigger =================
     const R = await setup("R");
     const opts = { gateway: mockGw, forceFallback: true };

@@ -84,7 +84,7 @@ function Case() {
       <div className="space-y-4">
         <h1 className="display text-3xl">Decisions</h1>
         <Empty title="Nothing to decide right now" action={<div className="flex justify-center gap-2"><Btn busy={!!busy} onClick={() => act("check", `/api/business/${biz}/shortage-check`)}>Check for a shortage now</Btn><Btn variant="secondary" href="/room/commitments">Add a document</Btn></div>}>
-          A case opens when the forecast shows a shortage: after you confirm a commitment, or when you ask for a check. The agent then investigates and proposes plans. It cannot act on its own.
+          A case opens when the forecast shows a shortage: after you confirm a commitment, or when you ask for a check. Your assistant then investigates and proposes plans. It cannot act on its own.
         </Empty>
         {error && <ErrorNote>{error}</ErrorNote>}
       </div>
@@ -94,6 +94,8 @@ function Case() {
   const reason = run.trigger?.reason ?? data.runs[0]?.trigger?.reason;
   const hasPlans = runs.some((r) => r.plans.length > 0);
   const signed = auths.some((a) => a.authorisation.signed);
+  const waitingSecond = runAuths.find((a) => a.authorisation.status === "awaiting_second");
+  const declinedSecond = runAuths.at(-1)?.authorisation.status === "declined";
   const ran = auths.some((a) => a.execution);
   const verified = auths.some((a) => a.execution?.status === "completed");
   const vfail = auths.some((a) => a.execution?.status === "verification_failed");
@@ -102,8 +104,8 @@ function Case() {
   const steps = [
     { label: "Problem found", state: stepState(true, false) },
     { label: "Options ready", state: stepState(hasPlans, !hasPlans && run.status !== "running") },
-    { label: "You approve", state: stepState(signed, hasPlans && !signed) },
-    { label: "Agent acts", state: stepState(ran && !["needs_replan"].includes(lastRun.lifecycle), signed && !ran, lastRun.lifecycle === "needs_replan" || lastRun.lifecycle === "exhausted") },
+    { label: "You approve", state: stepState(signed, (hasPlans && !signed) || !!waitingSecond) },
+    { label: "Assistant acts", state: stepState(ran && !["needs_replan"].includes(lastRun.lifecycle), signed && !ran, lastRun.lifecycle === "needs_replan" || lastRun.lifecycle === "exhausted") },
     { label: "Checked", state: stepState(verified, ran && !verified && !vfail && !["needs_replan", "exhausted"].includes(lastRun.lifecycle), vfail) },
   ];
 
@@ -121,12 +123,12 @@ function Case() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="display text-3xl">Decision: fix the cash gap</h1>
+          <h1 className="display text-3xl">Plan: fix the cash gap</h1>
           <p className="text-ink-soft">{reason ? <>The forecast showed {reason.kind === "below_zero" ? "you running out of cash" : "you dropping below your reserve"}: lowest <b className="num">{money(reason.minBalanceMinor, cur)}</b> in {week(reason.minBalanceWeek)}{reason.firstNegativeWeek ? `, below zero from ${week(reason.firstNegativeWeek)}` : ""}.</> : "A commitment started this case."}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=html`} download>Export evidence (readable, self-verifying)</a>
-          <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=json`} download>JSON</a>
+          <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=html`} download>Download the full record</a>
+          <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=json`} download>Data file (JSON)</a>
         </div>
         {roots.length > 1 && (
           <label className="text-sm text-ink-soft">Case <select className="ml-2 rounded-lg border border-line-strong bg-white px-2 py-1.5 text-ink" value={rootId} onChange={(e) => { setRootId(e.target.value); setData(null); setRoundIdx(null); setSelected(null); setLines(null); }}>
@@ -136,15 +138,17 @@ function Case() {
       <Stepper steps={steps} />
       {(() => {
         const dn = lines?.doNothing, ag = lines?.agreed;
-        const tone = verified ? "good" : vfail || isExhausted ? "danger" : lastRun.lifecycle === "needs_replan" ? "caution" : "accent";
+        const tone = verified ? "good" : vfail || isExhausted || declinedSecond ? "danger" : lastRun.lifecycle === "needs_replan" || waitingSecond ? "caution" : "accent";
         const [head, body] = verified && dn && ag
-          ? ["Fixed, and checked.", `Your lowest balance goes from ${money(dn.minBalanceMinor, cur)} (doing nothing) to ${money(ag.minBalanceMinor, cur)} with the deals that were actually agreed. A separate verifier confirmed it.`]
-          : vfail ? ["The check found a mismatch.", "What happened in the sandbox did not match what was agreed. Nothing is hidden: see the verification below."]
-          : isExhausted ? ["No plan fits inside your limits.", "The agent tried everything allowed. Below is the closest option and what you could loosen."]
-          : lastRun.lifecycle === "needs_replan" ? ["Someone said no, so the agent needs to try again.", "Tell it to re-plan: it will avoid what was refused and come back with new options."]
-          : signed && !ran ? ["You approved a plan. Now let the agent carry it out.", "It will negotiate and act, but every step must pass your limits first."]
-          : hasPlans ? ["The agent found ways to fix this. Pick one.", "Compare the options below. Nothing is sent to anyone until you review and sign one: signing is what gives the agent permission, and only within the limits shown."]
-          : ["The agent is working on it.", "It reads your numbers and searches for combinations of fixes."];
+          ? ["Fixed, and checked.", `Your lowest balance goes from ${money(dn.minBalanceMinor, cur)} (doing nothing) to ${money(ag.minBalanceMinor, cur)} with the deals that were actually agreed. A separate check confirmed it.`]
+          : vfail ? ["The check found a mismatch.", "What happened in the practice bank did not match what was agreed. Nothing is hidden: see the verification below."]
+          : isExhausted ? ["No plan fits inside your limits.", "Your assistant tried everything allowed. Below is the closest option and what you could loosen."]
+          : lastRun.lifecycle === "needs_replan" ? ["Someone said no, so your assistant needs to try again.", "Tell it to re-plan: it will avoid what was refused and come back with new options."]
+          : waitingSecond ? ["Waiting for a second approver.", `You have confirmed this plan. Because it involves large payments, a different approver must sign in as themselves and confirm it too. Nothing is sent or paid until they do.${session?.user.role === "owner" ? "" : " Open Approvals to confirm it."}`]
+          : declinedSecond ? ["The second approver declined this plan.", "Nothing was sent or paid. Adjust the terms or choose another plan, and sign again."]
+          : signed && !ran ? ["You approved a plan. Now let your assistant carry it out.", "It will negotiate and act, but every step must pass your limits first."]
+          : hasPlans ? ["Your assistant found ways to fix this. Pick one.", "Compare the options below. Nothing is sent to anyone until you review and sign one: signing is what gives your assistant permission, and only within the limits shown."]
+          : ["Your assistant is working on it.", "It reads your numbers and searches for combinations of fixes."];
         return <div className={`rounded-2xl border p-4 ${tone === "good" ? "border-good/40 bg-good-soft" : tone === "danger" ? "border-danger/40 bg-danger-soft" : tone === "caution" ? "border-caution/40 bg-caution-soft" : "border-accent/30 bg-accent-soft/50"}`}><p className="display text-xl">{head}</p><p className="mt-1 text-sm text-ink-soft">{body}</p></div>;
       })()}
       {error && <ErrorNote>{error}</ErrorNote>}
@@ -155,18 +159,18 @@ function Case() {
         </div>
       )}
 
-      <details className="group rounded-2xl border border-line bg-panel"><summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-ink-soft">Show how the agent worked it out ({run.timeline.length} steps)</summary>
-      <Card title="How the agent worked it out" subtitle={`Round ${run.round}${run.round > 0 ? " · re-plan with learned constraints" : ""} · started ${new Date(run.startedAt).toLocaleTimeString("en-GB")}`} right={<RunChips run={run} />}>
+      <details className="group rounded-2xl border border-line bg-panel"><summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-ink-soft">Show how the assistant worked it out ({run.timeline.length} steps)</summary>
+      <Card title="How the assistant worked it out" subtitle={`Round ${run.round}${run.round > 0 ? " · re-plan with learned constraints" : ""} · started ${new Date(run.startedAt).toLocaleTimeString("en-GB")}`} right={<RunChips run={run} />}>
         <Timeline run={run} />
-        {run.constraints?.length > 0 && <p className="mt-3 text-xs text-ink-soft">This round respected {run.constraints.length} structured constraint{run.constraints.length === 1 ? "" : "s"} learned from counterparties.</p>}
+        {run.constraints?.length > 0 && <p className="mt-3 text-xs text-ink-soft">This round respected {run.constraints.length} structured constraint{run.constraints.length === 1 ? "" : "s"} learned from customers, suppliers and lenders.</p>}
       </Card></details>
 
       {run.plans.length === 0 ? (
-        run.status === "running" ? <Loading label="The agent is searching for plans" /> : <Empty title="No plans were proposed">{run.error ?? "The planner found no plan that fits your mandate and constraints."}</Empty>
+        run.status === "running" ? <Loading label="Your assistant is searching for plans" /> : <Empty title="No plans were proposed">{run.error ?? "No plan fits the limits you signed and what the other side has said."}</Empty>
       ) : (
         <>
           <Card title="Your options, compared with doing nothing" subtitle="Every number is calculated by fixed code, not written by the AI.">
-            <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} onSign={(id) => setSignPlan(id)} onEdit={(id) => setEditPlanId(id)} canSign={run.id === lastRun.id && !runAuths.some((a) => ["authorised", "used"].includes(a.authorisation.status)) && !isExhausted} />
+            <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} onSign={(id) => setSignPlan(id)} onEdit={(id) => setEditPlanId(id)} canSign={session?.user.role === "owner" && run.id === lastRun.id && !runAuths.some((a) => ["authorised", "used", "awaiting_second"].includes(a.authorisation.status)) && !isExhausted} />
           </Card>
           <Card title="What each choice does to your cash" subtitle="The grey dashed line is doing nothing.">
             {lines ? <Chart series={series} reserveMinor={lines.reserveMinor} currency={cur} /> : <Loading />}
@@ -188,7 +192,7 @@ function Case() {
       {auths.filter((a) => a.execution?.verification).map((a) => (
         <Card key={`v-${a.authorisation.id}`} title="Independent check" subtitle="Done by a separate piece of code, not the one that carried out the plan." tone={a.execution.verification.ok ? "good" : "danger"}>
           <VerificationPanel v={a.execution.verification} cur={cur} />
-          <p className="mt-3 text-sm"><Link className="text-accent underline" href="/room/scoreboard">See the results</Link> · <Link className="text-accent underline" href="/room/evidence">Read the proof</Link></p>
+          <p className="mt-3 text-sm"><Link className="text-accent underline" href="/room/safety?tab=results">See the results</Link> · <Link className="text-accent underline" href="/room/safety?tab=records">Read the records</Link></p>
         </Card>
       ))}
 

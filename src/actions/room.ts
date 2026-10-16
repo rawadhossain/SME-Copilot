@@ -10,7 +10,7 @@ import { buildContext } from "./agent-run";
 import { getMandateInfo } from "./read";
 import { getPlanAuthorisation } from "./plan-read";
 import { changesFromRecorded, recordedBranches } from "./plan-schedule";
-import { detectShortage } from "./shortage";
+import { currentAgreedChanges, detectShortage } from "./shortage";
 import type { PlanTerms } from "./plan-terms";
 import { ActionError, type Db } from "./types";
 
@@ -21,7 +21,12 @@ const lineOf = (f: Forecast) => ({
 });
 
 /** The cash desk: balance, shortage state, commitments, mandate, and the do-nothing forecast with the confirmed commitments. */
-export async function getRoom(db: Db, businessId: string) {
+export interface RoomOptions {
+  /** "What if customers pay this many days late": adds a downside line to the same picture (1 to 90 days). */
+  lateDays?: number;
+}
+
+export async function getRoom(db: Db, businessId: string, opts: RoomOptions = {}) {
   const [biz] = await db.select().from(businesses).where(eq(businesses.id, businessId));
   if (!biz) throw new ActionError("not_found", "Business not found");
   const ctx = await buildContext(db, businessId, null);
@@ -29,6 +34,27 @@ export async function getRoom(db: Db, businessId: string) {
   const f = buildForecast(ctx.input, { events: ctx.pending.map((p) => p.event), horizonWeeks: ctx.horizonWeeks });
   const booksOnly = buildForecast(ctx.input, { events: [], horizonWeeks: ctx.horizonWeeks });
   const detection = await detectShortage(db, businessId);
+  // The terms already agreed with customers, suppliers and lenders change the picture (the same view the shortage check uses): when there are
+  // any, the screen leads with this forecast and keeps "do nothing" as a comparison.
+  const pendingEvents = ctx.pending.map((p) => p.event);
+  const agreedChanges = await currentAgreedChanges(db, businessId);
+  let agreed: ReturnType<typeof lineOf> | null = null;
+  let headlineEvents = pendingEvents; // what the headline forecast is built from
+  let headlineAdjustments = undefined as ReturnType<typeof adjustmentsOf> | undefined;
+  if (Object.keys(agreedChanges).length > 0) {
+    try {
+      headlineEvents = applyTermChanges(pendingEvents, agreedChanges);
+      headlineAdjustments = adjustmentsOf(agreedChanges);
+      agreed = lineOf(buildForecast(ctx.input, { events: headlineEvents, horizonWeeks: ctx.horizonWeeks, adjustments: headlineAdjustments }));
+    } catch {
+      agreed = null; // an agreed term that no longer fits the confirmed order is ignored rather than guessed
+      headlineEvents = pendingEvents;
+      headlineAdjustments = undefined;
+    }
+  }
+  // Downside: every customer payment that is an estimate arrives later by this many days (the engine's downside variant).
+  const lateDays = opts.lateDays && opts.lateDays >= 1 && opts.lateDays <= 90 ? Math.floor(opts.lateDays) : null;
+  const downside = lateDays === null ? null : { days: lateDays, ...lineOf(buildForecast(ctx.input, { events: headlineEvents, horizonWeeks: ctx.horizonWeeks, adjustments: headlineAdjustments, downsideDelayDays: lateDays })) };
   const mandate = await getMandateInfo(db, businessId).catch(() => null);
   // What is causing the gap: each driver removed on its own, ranked (deterministic; same engine as the forecast).
   const drivers = detection.shortage
@@ -40,7 +66,7 @@ export async function getRoom(db: Db, businessId: string) {
     business: { id: biz.id, name: biz.name, currency: biz.baseCurrency, isSynthetic: biz.isSynthetic, isTest: biz.isTest },
     asOf: ctx.asOf, reserveMinor: biz.reserveMinor,
     balances: { booksMinor: ctx.input.openingBalance, sandboxBankMinor: bank?.balanceMinor ?? null },
-    forecast: lineOf(f), booksOnly: lineOf(booksOnly), horizonWeeks: ctx.horizonWeeks,
+    forecast: lineOf(f), agreed, downside, booksOnly: lineOf(booksOnly), horizonWeeks: ctx.horizonWeeks,
     shortage: detection,
     commitments: ctx.pending.map((p) => ({ ref: p.ref, kind: p.event.kind, date: p.event.date, amountMinor: p.event.amountMinor, confidence: p.event.confidence, label: p.event.label, extractionId: p.extractionId })),
     mandate,

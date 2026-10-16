@@ -2,6 +2,7 @@
 // structured data only: no raw document text, no counterparty free text, no personality data. Tools are pure functions of it.
 import type { CommitmentEvent } from "@/domain/commitment-event";
 import type { Constraint } from "@/domain/constraints";
+import type { FinancingOffer } from "@/domain/financing-offer";
 import type { ShortageReason } from "@/domain/shortage";
 import type { PlanView } from "@/domain/plan";
 import type { EngineInput } from "@/engine";
@@ -45,6 +46,8 @@ export interface AgentToolContext {
   shortage: ShortageReason | null;
   /** Finance fee assumed when planning (basis points of the invoice). */
   financeFeeBps: number;
+  /** Funding offers the owner saved (typed by the owner, validated by code). Absent or empty = the tool is not offered to the model. */
+  fundingOffers?: FinancingOffer[];
   /** Numbers seen in tool results so far (digit strings); used to check model prose. */
   seen: Set<string>;
   /** Validation outcomes of submit_plans calls, in order. */

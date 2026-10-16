@@ -46,6 +46,8 @@ registerAgentScript(AGENT_PURPOSE, async (c: ScriptContext) => {
     l.kind === "supplier_reduce_deposit" ? `cut the supplier deposit to ${l.percentBps / 100}%`
     : l.kind === "supplier_defer_balance" ? `defer the supplier balance by ${l.daysAfterShipment} days`
     : l.kind === "buyer_request_deposit" ? `ask the buyer for a ${l.percentBps / 100}% deposit`
+    : l.kind === "chase_overdue" ? `ask a buyer to pay its overdue invoices within ${l.payWithinDays} days`
+    : l.kind === "early_payment_discount" ? `offer a buyer a ${l.discountBps / 100}% discount to pay ${l.daysEarly} days early`
     : `apply for an invoice-finance advance of ${l.advanceBps / 100}%`;
   const plans = picks.map((p, i) => ({
     title: `${i === 0 ? "Recommended: " : ""}${p.levers.map(words).join(", ").replace(/^./, (s) => s.toUpperCase())}`.slice(0, 120),
@@ -87,7 +89,7 @@ registerAgentScript(WEAK_AGENT_PURPOSE, async (c: ScriptContext) => {
   const [cps] = (await c.step([call("get_counterparties")])) as Json[];
   const supplier = (cps?.counterparties ?? []).find((x: Json) => x.type === "supplier");
   const plans = [
-    { title: "Recommended: Ask the supplier for a smaller deposit", levers: [{ kind: "supplier_reduce_deposit", counterpartyId: supplier?.id, percentBps: 1500 }], contingencies: [], rationale: "A single request to one counterparty." },
+    { title: "Recommended: Ask the supplier for a smaller deposit", levers: [{ kind: "supplier_reduce_deposit", counterpartyId: supplier?.id, percentBps: 2500 }], contingencies: [], rationale: "A single request to one counterparty." },
     { title: "Ask the supplier for a later balance", levers: [{ kind: "supplier_defer_balance", counterpartyId: supplier?.id, daysAfterShipment: 30 }], contingencies: [], rationale: "Delays the balance payment." },
   ];
   await c.step([call("submit_plans", { plans })]);

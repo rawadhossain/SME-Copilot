@@ -4,9 +4,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/db";
 import { SESSION_COOKIE, csrfOk, getSession } from "@/auth";
+import { demoToolsEnabled } from "@/lib/demo-tools";
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  // Demo tools are off in a production deployment: answer a real 404 (before anything else, so it does not even ask for sign-in).
+  if (pathname === "/dev" && !demoToolsEnabled()) return NextResponse.rewrite(new URL("/__not-found", req.url), { status: 404 });
   const isApi = pathname.startsWith("/api/");
   const session = await getSession(db, req.cookies.get(SESSION_COOKIE)?.value);
   const method = req.method.toUpperCase();
@@ -35,4 +38,4 @@ export async function proxy(req: NextRequest) {
   return NextResponse.next();
 }
 
-export const config = { matcher: ["/api/:path*", "/room/:path*", "/demo/:path*", "/login"] };
+export const config = { matcher: ["/api/:path*", "/room/:path*", "/dev", "/login"] };

@@ -7,6 +7,8 @@ export interface SessionInfo {
   csrfToken: string;
   business: { id: string; name: string; currency: string; isSynthetic: boolean; isTest: boolean };
   businesses: { id: string; name: string; isTest: boolean }[];
+  /** True only when demo tools are on (development, or DEMO_TOOLS=on): the /dev page and sample documents. */
+  demoTools?: boolean;
 }
 
 let csrf = "";
@@ -19,6 +21,7 @@ export async function call<T = any>(path: string, body?: unknown, method?: strin
     headers: { "content-type": "application/json", ...(m !== "GET" && csrf ? { "x-csrf-token": csrf } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a full reload on purpose: it resets all signed-in state
   if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/login")) window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
   const data = (await res.json().catch(() => ({}))) as T;
   return { ok: res.ok, status: res.status, data };
@@ -38,26 +41,3 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   return <SessionContext.Provider value={{ session, refresh }}>{children}</SessionContext.Provider>;
 }
 
-/** Adds the CSRF token to same-origin changes made by the older /demo pages, which use plain fetch. */
-export function CsrfFetch() {
-  useEffect(() => {
-    const original = window.fetch;
-    window.fetch = async (input, init) => {
-      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
-      const sameOrigin = url.startsWith("/") || url.startsWith(window.location.origin);
-      if (sameOrigin && method !== "GET" && method !== "HEAD" && !url.includes("/api/auth/login")) {
-        if (!csrf) {
-          const r = await original("/api/auth/session");
-          if (r.ok) csrf = ((await r.json()) as SessionInfo).csrfToken;
-        }
-        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-        if (!headers.has("x-csrf-token")) headers.set("x-csrf-token", csrf);
-        return original(input, { ...init, headers });
-      }
-      return original(input, init);
-    };
-    return () => { window.fetch = original; };
-  }, []);
-  return null;
-}

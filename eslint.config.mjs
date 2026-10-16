@@ -46,7 +46,7 @@ const eslintConfig = defineConfig([
   },
   // Owner-facing API routes are the only app code allowed to import the approval code.
   {
-    files: ["src/app/api/actions/*/approve/route.ts", "src/app/api/business/*/mandate/**/*.ts", "src/app/api/business/*/payees/**/*.ts", "src/app/api/business/*/console/route.ts", "src/app/api/business/*/plan-authorisations/**/route.ts", "src/app/api/demo/clone/route.ts", "src/app/api/extractions/*/confirm/route.ts", "src/app/api/extractions/*/reject/route.ts"],
+    files: ["src/app/api/actions/*/approve/route.ts", "src/app/api/business/*/approvals/route.ts", "src/app/api/plan-authorisations/*/second-approval/route.ts", "src/app/api/business/*/mandate/**/*.ts", "src/app/api/business/*/payees/**/*.ts", "src/app/api/business/*/console/route.ts", "src/app/api/business/*/plan-authorisations/**/route.ts", "src/app/api/demo/clone/route.ts", "src/app/api/extractions/*/confirm/route.ts", "src/app/api/extractions/*/reject/route.ts"],
     rules: { "no-restricted-imports": ["error", { paths: [{ name: "@/sandbox", importNames: ["sendProposal", "schedulePayment", "submitApplication", "executeDuePayments", "cancelPayment", "acceptApplicationOffer", "withdrawApplication", "withdrawThread", "scheduleReceipt", "cancelReceipt", "executeDueReceipts"], message: "Sandbox writes must go through src/actions (the gate)." }] }] },
   },
   // The planning agent (src/agent) is READ-ONLY: it must not import the action pipeline, sandbox write operations, the

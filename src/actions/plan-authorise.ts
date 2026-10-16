@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { leverProblems } from "@/agent";
-import { agentRuns, businesses, planAuthorisations, plans } from "@/db/schema";
+import { agentRuns, businesses, counterparties, planAuthorisations, plans } from "@/db/schema";
 import type { Constraint } from "@/domain/constraints";
 import { leverSchema, planId, type Lever } from "@/domain/plan";
 import { checkSignedMandate, evaluate, requestSchema, type GateResult } from "@/gate";
@@ -148,12 +148,12 @@ export async function proposeAuthorisation(db: Db, businessId: string, input: un
 }
 
 /** Step 2: re-check everything, then the owner key signs. Refuses an expired, denied or already signed proposal. */
-export async function approveAuthorisation(db: Db, authorisationId: string, approvedByInput: string) {
+export async function approveAuthorisation(db: Db, authorisationId: string, approvedByInput: string, expect: "proposed" | "awaiting_second" = "proposed") {
   const approvedBy = z.string().trim().min(1).max(100).parse(approvedByInput);
   return db.transaction(async (tx) => {
     const [auth] = await tx.select().from(planAuthorisations).where(eq(planAuthorisations.id, z.string().uuid().parse(authorisationId))).for("update");
     if (!auth) throw new ActionError("not_found", "Unknown plan authorisation");
-    if (auth.status !== "proposed") throw new ActionError("conflict", `The authorisation is ${auth.status}; only a proposed one can be signed`);
+    if (auth.status !== expect) throw new ActionError("conflict", `The authorisation is ${auth.status}; only ${expect === "proposed" ? "a proposed one" : "one waiting for its second approval"} can be signed`);
     const terms = auth.terms as PlanTerms;
     if (termsHashOf(terms) !== auth.termsHash) throw new ActionError("refused", "Stored terms do not match their hash; refusing to sign");
     const [plan] = await tx.select().from(plans).where(and(eq(plans.businessId, auth.businessId), eq(plans.runId, auth.runId), eq(plans.planHash, auth.planId)));
@@ -194,6 +194,64 @@ export async function authorisePlan(db: Db, businessId: string, input: unknown, 
   const approved = await approveAuthorisation(db, proposed.authorisation.id, approvedBy);
   if (!approved.signed) return { status: "expired" as const, authorisationId: proposed.authorisation.id, problems: [], gates: proposed.gates, authorisation: proposed.authorisation };
   return { status: "authorised" as const, authorisationId: approved.authorisation.id, problems: [], gates: proposed.gates, authorisation: approved.authorisation };
+}
+
+/**
+ * Two-person control, step 1. The owner has confirmed (password re-entered by the route); the plan is proposed and checked, then it WAITS. The
+ * system does not sign it yet: a different approver account must confirm from their own sign-in (confirmSecond). Nothing is sent to anyone.
+ */
+export async function requestSecondApproval(db: Db, businessId: string, input: unknown, first: { id: string; name: string }) {
+  const proposed = (await proposeAuthorisation(db, businessId, input)) as { authorisation: typeof planAuthorisations.$inferSelect; denied: boolean; problems: string[]; gates: RequestGate[] };
+  if (proposed.denied) return { status: "denied" as const, authorisationId: proposed.authorisation.id, problems: proposed.problems, gates: proposed.gates, authorisation: proposed.authorisation };
+  const terms = proposed.authorisation.terms as PlanTerms;
+  if (terms.confirmations !== 2) throw new ActionError("invalid", "This plan does not need a second approver");
+  const [waiting] = await db.update(planAuthorisations).set({ status: "awaiting_second", firstConfirmedBy: first.id, firstConfirmedName: first.name, firstConfirmedAt: new Date() })
+    .where(and(eq(planAuthorisations.id, proposed.authorisation.id), eq(planAuthorisations.status, "proposed"))).returning();
+  if (!waiting) throw new ActionError("conflict", "The authorisation changed while it was being prepared");
+  await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_AWAITING_SECOND, actor: "owner", detail: { authorisationId: waiting.id, runId: waiting.runId, planId: waiting.planId, termsHash: waiting.termsHash, firstConfirmedBy: first.name, expiresAt: waiting.expiresAt } });
+  return { status: "awaiting_second" as const, authorisationId: waiting.id, problems: [], gates: proposed.gates, authorisation: waiting };
+}
+
+/**
+ * Two-person control, step 2. A DIFFERENT approver, signed in as themselves, confirms or declines. The route has already re-checked their own
+ * password. Same person twice, a non-approver, or another business are refused here as well. Approving signs the plan (the same signing step as
+ * a single confirmation); declining ends it.
+ */
+export async function confirmSecond(db: Db, businessId: string, authorisationId: string, approver: { id: string; name: string; role: string }, decision: "approve" | "decline") {
+  const [auth] = await db.select().from(planAuthorisations).where(eq(planAuthorisations.id, z.string().uuid().parse(authorisationId)));
+  if (!auth || auth.businessId !== businessId) throw new ActionError("not_found", "Unknown plan authorisation");
+  if (auth.status !== "awaiting_second") throw new ActionError("conflict", `This plan is ${auth.status}, not waiting for a second approval`);
+  const refuse = async (why: string) => {
+    await appendRecord(db, { businessId, event: ACTION_EVENTS.AUTH_SECOND_APPROVAL_FAILED, actor: "owner", detail: { authorisationId: auth.id, approver: approver.name, reason: why } });
+    throw new ActionError("refused", why);
+  };
+  if (approver.role !== "approver") await refuse("Only an approver account can give the second approval.");
+  if (approver.id === auth.firstConfirmedBy) await refuse("The second approval must come from a different person than the first.");
+  if (decision === "decline") {
+    const [declined] = await db.update(planAuthorisations).set({ status: "declined" }).where(and(eq(planAuthorisations.id, auth.id), eq(planAuthorisations.status, "awaiting_second"))).returning();
+    if (!declined) throw new ActionError("conflict", "The authorisation changed before it could be declined");
+    await appendRecord(db, { businessId, event: ACTION_EVENTS.AUTH_SECOND_APPROVAL_DECLINED, actor: "owner", detail: { authorisationId: auth.id, approver: approver.name, firstConfirmedBy: auth.firstConfirmedName } });
+    return { status: "declined" as const, authorisationId: auth.id };
+  }
+  const approved = await approveAuthorisation(db, auth.id, `${auth.firstConfirmedName ?? "Owner"} + ${approver.name}`, "awaiting_second");
+  if (!approved.signed) return { status: "expired" as const, authorisationId: auth.id };
+  await appendRecord(db, { businessId, event: ACTION_EVENTS.AUTH_SECOND_APPROVAL, actor: "owner", detail: { authorisationId: auth.id, approver: approver.name, firstConfirmedBy: auth.firstConfirmedName, termsHash: auth.termsHash } });
+  return { status: "authorised" as const, authorisationId: auth.id, authorisation: approved.authorisation };
+}
+
+/** Plans waiting for a second approval in this business, with the plain-language terms the approver is confirming. */
+export async function listAwaitingSecond(db: Db, businessId: string, viewerUserId: string) {
+  const rows = await db.select().from(planAuthorisations).where(and(eq(planAuthorisations.businessId, businessId), eq(planAuthorisations.status, "awaiting_second"))).orderBy(planAuthorisations.createdAt);
+  const cps = await db.select({ id: counterparties.id, name: counterparties.name }).from(counterparties).where(eq(counterparties.businessId, businessId));
+  const [biz] = await db.select({ c: businesses.baseCurrency }).from(businesses).where(eq(businesses.id, businessId));
+  const names = Object.fromEntries(cps.map((c) => [c.id, c.name]));
+  return rows.map((r) => ({
+    id: r.id, runId: r.runId, planId: r.planId, termsHash: r.termsHash, createdAt: r.createdAt, expiresAt: r.expiresAt, mandateVersion: r.mandateVersion,
+    firstConfirmedName: r.firstConfirmedName, firstConfirmedAt: r.firstConfirmedAt,
+    /** The person who gave the first confirmation cannot give the second. */
+    canConfirm: r.firstConfirmedBy !== viewerUserId,
+    summary: describeTerms(r.terms as PlanTerms, names, biz?.c ?? "GBP"),
+  }));
 }
 
 /** Preview of what a signature would cover. Writes nothing. */

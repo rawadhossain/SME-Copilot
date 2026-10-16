@@ -528,7 +528,7 @@ export const planAuthorisations = pgTable(
     termsHash: text("terms_hash").notNull(),
     mandateVersion: integer("mandate_version").notNull(),
     mandateHash: text("mandate_hash").notNull(),
-    status: text("status").notNull(), // proposed | denied | authorised | used | expired
+    status: text("status").notNull(), // proposed | awaiting_second | declined | denied | authorised | used | expired
     gateResult: jsonb("gate_result").notNull(),
     signature: text("signature"),
     approvedBy: text("approved_by"),
@@ -541,6 +541,11 @@ export const planAuthorisations = pgTable(
     lettersHash: text("letters_hash"),
     signatureImage: text("signature_image"),
     signatureHash: text("signature_hash"),
+    // Two-person control: when a plan needs a second confirmation, the owner confirms first (these columns), the plan waits as
+    // "awaiting_second", and a DIFFERENT approver account confirms from their own sign-in. Only then does the system sign.
+    firstConfirmedBy: uuid("first_confirmed_by"),
+    firstConfirmedName: text("first_confirmed_name"),
+    firstConfirmedAt: timestamp("first_confirmed_at", { withTimezone: true }),
   },
   (t) => [index("plan_authorisations_business_idx").on(t.businessId, t.createdAt)],
 );
@@ -601,4 +606,25 @@ export const loginAttempts = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("login_attempts_key_idx").on(t.key, t.at)],
+);
+
+// ---------- Funding offers typed by the owner (Phase K) ----------
+// The validated offer (money as integer strings) plus the owner's form, so the page can show it again. Replaced as a set: saving archives the
+// previous active offers. Append-style: the app role can only set archived_at after insert.
+export const fundingOffers = pgTable(
+  "funding_offers",
+  {
+    id: id(),
+    businessId: businessId(),
+    label: text("label").notNull(),
+    offer: jsonb("offer").notNull(),
+    form: jsonb("form").notNull(),
+    offerHash: text("offer_hash").notNull(),
+    createdAt: createdAt(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("funding_offers_business_idx").on(t.businessId, t.createdAt),
+    uniqueIndex("funding_offers_active_label_idx").on(t.businessId, t.label).where(sql`${t.archivedAt} is null`),
+  ],
 );

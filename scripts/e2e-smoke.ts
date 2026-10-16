@@ -134,6 +134,18 @@ async function main() {
       if (first && CANON) return sets.find((p: any) => stingy(p)) ?? sets.find((p: any) => has(p, ["buyer_request_deposit"]) && has(p, BOOKS)) ?? sets.find((p: any) => has(p, ["buyer_request_deposit"])) ?? sets[0];
       return sets.find((p: any) => has(p, BOOKS)) ?? sets[0];
     };
+    // Run something as the APPROVER: their own sign-in and their own cookie jar. The owner's session is put back afterwards.
+    const asApprover = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      const keep = { cookie, csrf };
+      cookie = ""; csrf = "";
+      try {
+        const lg = await api("/api/auth/login", { body: APPROVER, csrf: false, cookie: false });
+        assert.equal(lg.status, 200, JSON.stringify(lg.json));
+        csrf = lg.json.csrfToken;
+        assert.equal((await api("/api/auth/business", { body: { businessId: biz } })).status, 200, "the approver works in the same company");
+        return await fn();
+      } finally { cookie = keep.cookie; csrf = keep.csrf; }
+    };
     const sign = async (runId: string, plan: any) => {
       const body = { runId, planId: plan.id, confirmations: 2 };
       const prev = await api(`/api/business/${biz}/plan-authorisations/preview`, { body });
@@ -141,18 +153,45 @@ async function main() {
       assert.ok(prev.json.summary.asks.length > 0 && prev.json.mandateVersion);
       assert.ok(Object.keys(prev.json.letters).length > 0 && Object.values<any>(prev.json.letters).every((l) => /^Dear /.test(l.paragraphs[0])), "a professional first draft letter exists for each counterparty");
       // Signing needs the letters AND a drawn signature as well as the password.
-      const noSig = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, letters: prev.json.letters, password: OWNER.password, secondApprover: APPROVER } });
+      const noSig = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, letters: prev.json.letters, password: OWNER.password } });
       assert.equal(noSig.status, 400, "no drawn signature, no signing");
-      const noLetters = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, signatureImage: makeSignaturePng(), password: OWNER.password, secondApprover: APPROVER } });
+      const noLetters = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, signatureImage: makeSignaturePng(), password: OWNER.password } });
       assert.equal(noLetters.status, 400, "no letters, no signing");
       const signed = { letters: prev.json.letters, signatureImage: makeSignaturePng() };
-      const noPw = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: "wrong", secondApprover: APPROVER } });
+      const noPw = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: "wrong" } });
       assert.equal(noPw.status, 403, "a wrong step-up password signs nothing");
-      const noSecond = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: OWNER.password, secondApprover: { email: OWNER.email, password: OWNER.password } } });
-      assert.equal(noSecond.status, 403, "the owner cannot be their own second approver");
-      const ok = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: OWNER.password, secondApprover: APPROVER } });
+      // An approver account cannot sign a plan: only the owner does.
+      await asApprover(async () => {
+        const asAppr = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: APPROVER.password } });
+        assert.equal(asAppr.status, 403, "an approver cannot sign a plan as the owner");
+      });
+
+      // The owner confirms with their OWN password only. The plan then WAITS; the system has not signed it and nothing can run.
+      const ok = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: OWNER.password } });
       assert.equal(ok.status, 200, JSON.stringify(ok.json));
-      return ok.json.authorisationId as string;
+      assert.equal(ok.json.status, "awaiting_second", "a plan that needs a second approver waits for one");
+      const id = ok.json.authorisationId as string;
+      const early = await api(`/api/plan-authorisations/${id}/execute`, { method: "POST", body: {} });
+      assert.ok(early.status >= 400 && early.json?.status !== "completed", `nothing runs before the second approval (HTTP ${early.status})`);
+      // The owner cannot be their own second approver, and the owner's screen shows it cannot be confirmed by them.
+      const self = await api(`/api/plan-authorisations/${id}/second-approval`, { body: { password: OWNER.password } });
+      assert.ok([403, 422].includes(self.status), `the owner cannot give the second approval (HTTP ${self.status})`);
+      const mine = (await api(`/api/business/${biz}/approvals`)).json as any[];
+      assert.ok(mine.some((x) => x.id === id && x.canConfirm === false && x.summary.asks.length > 0), "the owner sees the waiting plan but cannot confirm it");
+
+      // The approver, signed in as THEMSELVES, reads it and confirms with their own password.
+      await asApprover(async () => {
+        const theirs = (await api(`/api/business/${biz}/approvals`)).json as any[];
+        assert.ok(theirs.some((x) => x.id === id && x.canConfirm === true), "the approver sees the plan waiting for them");
+        const wrong = await api(`/api/plan-authorisations/${id}/second-approval`, { body: { password: "wrong" } });
+        assert.equal(wrong.status, 403, "a wrong approver password confirms nothing");
+        const good = await api(`/api/plan-authorisations/${id}/second-approval`, { body: { password: APPROVER.password } });
+        assert.equal(good.status, 200, JSON.stringify(good.json));
+        assert.equal(good.json.status, "authorised");
+        const again = await api(`/api/plan-authorisations/${id}/second-approval`, { body: { password: APPROVER.password } });
+        assert.equal(again.status, 409, "it can only be confirmed once");
+      });
+      return id;
     };
     let c1 = (await api(`/api/business/${biz}/cases/${shortageRunId}`)).json;
     const plan1 = pick(c1, shortageRunId!, true);
@@ -199,11 +238,68 @@ async function main() {
     for (const needed of ["auth.step_up", "auth.second_approval", "plan.authorised", "plan.verified"]) assert.ok(events.includes(needed), `evidence has ${needed}`);
     assert.ok(events.includes("auth.step_up_failed"), "the failed step-up is in the log");
     log(`evidence: ${ev.count} records, chain ok; sign-in, step-up, second approval and signing are in the log`);
-    for (const path of ["/room", "/room/commitments", `/room/case?run=${shortageRunId}`, "/room/scoreboard", "/room/mandate", "/room/evidence", "/demo/actions"]) {
+    // Funding options (Phase K): happy path against a hand figure, and the refusals.
+    {
+      const offer = { id: "Loan A", lender: "Test lender", product: "term_loan", principal: "20000.00", upfrontFees: "1000.00", disbursementDate: "2026-10-20", schedule: { kind: "equal", firstDate: "2026-10-27", count: 8, frequency: "weekly", amount: "2750.00" } };
+      const ok = await api(`/api/business/${biz}/funding/compare`, { body: { offers: [offer] } });
+      assert.equal(ok.status, 200);
+      assert.equal(ok.json.comparison.offers[0].cost.totalCostMinor, "300000", "20,000 advanced, 1,000 fees, 8 x 2,750 repaid = 3,000.00 cost");
+      assert.ok(ok.json.comparison.doNotBorrow.weekly.length >= 13, "the not-borrowing line is returned for the chart");
+      assert.equal((await api(`/api/business/${biz}/funding/compare`, { body: { offers: [offer] }, cookie: false, csrf: false })).status, 401, "needs a session");
+      assert.equal((await api(`/api/business/${biz}/funding/compare`, { body: { offers: [offer] }, csrf: false })).status, 403, "needs the CSRF token");
+      const badAmount = await api(`/api/business/${biz}/funding/compare`, { body: { offers: [{ ...offer, principal: "20000.123" }] } });
+      assert.equal(badAmount.status, 400, "a three-decimal GBP amount is refused, not rounded");
+      const under = await api(`/api/business/${biz}/funding/compare`, { body: { offers: [{ ...offer, schedule: { ...offer.schedule, amount: "1000.00" } }] } });
+      assert.equal(under.status, 400, "an offer that repays less than it advances is refused");
+      log("funding: comparison matches the hand figure; no session, no CSRF token, a too-precise amount and an under-repaying offer are all refused");
+
+      // Saved offers: save, read back, replace (the set is replaced, the old rows archived), and a bad save writes nothing.
+      const put = await api(`/api/business/${biz}/funding/offers`, { method: "PUT", body: { offers: [offer] } });
+      assert.equal(put.status, 200, JSON.stringify(put.json));
+      assert.equal(put.json.saved, 1);
+      const bad = await api(`/api/business/${biz}/funding/offers`, { method: "PUT", body: { offers: [{ ...offer, principal: "abc" }] } });
+      assert.equal(bad.status, 400, "an invalid save is refused");
+      assert.equal((await api(`/api/business/${biz}/funding/offers`, { method: "PUT", body: { offers: [offer] }, csrf: false })).status, 403, "saving needs the CSRF token");
+      await api(`/api/business/${biz}/funding/offers`, { method: "PUT", body: { offers: [offer] } }); // replaced, not duplicated
+      const got = await api(`/api/business/${biz}/funding/offers`);
+      assert.equal(got.json.forms.length, 1, "saving again replaces the set");
+      assert.equal(got.json.offers[0].id, "Loan A");
+
+      // Contract check: a matching contract, then one with a higher fee and a later first payment.
+      const match = await api(`/api/business/${biz}/funding/contract-check`, { body: { offerLabel: "Loan A", contract: offer } });
+      assert.equal(match.status, 200);
+      assert.equal(match.json.check.matches, true);
+      const worse = await api(`/api/business/${biz}/funding/contract-check`, { body: { offerLabel: "Loan A", contract: { ...offer, upfrontFees: "1500.00" } } });
+      const fee = worse.json.check.differences.find((d: any) => d.field === "upfront_fees");
+      assert.ok(fee && fee.worse === true && fee.contract === "150000", "a higher fee in the contract is flagged as costing more");
+      assert.equal(worse.json.check.extraCostMinor, "50000", "the extra fee of 500.00 is the extra cost");
+      assert.equal((await api(`/api/business/${biz}/funding/contract-check`, { body: { contract: offer } })).status, 400, "neither an offer nor a saved name: refused");
+      assert.equal((await api(`/api/business/${biz}/funding/contract-check`, { body: { offerLabel: "No such offer", contract: offer } })).status, 404, "an unknown saved offer name");
+
+      // Signed funding limits: a new mandate version (signed with the dev owner key by the script) changes what the comparison flags.
+      const none = await api(`/api/business/${biz}/funding/compare`, { body: { offers: [offer] } });
+      assert.equal(none.json.limits.costBps, null, "no funding limits before they are signed");
+      const sign = spawnSync("bun", ["scripts/mandate-funding-limits.ts", biz], { env: { ...process.env, FUNDING_MAX_COST_BPS: "5000", FUNDING_MAX_AMOUNT_MINOR: "1500000" }, encoding: "utf8" });
+      assert.equal(sign.status, 0, `signing the limits failed: ${sign.stderr || sign.stdout}`);
+      const capped = await api(`/api/business/${biz}/funding/compare`, { body: { offers: [offer] } });
+      assert.equal(capped.json.limits.costBps, 5000);
+      assert.equal(capped.json.limits.mandateValid, true);
+      const o0 = capped.json.comparison.offers[0];
+      assert.equal(o0.withinCostCap, false, "182.96% is above the signed 50%");
+      assert.equal(o0.withinAmountCap, false, "20,000.00 is above the signed 15,000.00");
+      assert.ok(o0.warnings.some((w: string) => w.includes("above your limit")) && o0.warnings.some((w: string) => w.includes("funding limit you signed")));
+      log("funding store and contract check: save and replace, bad save refused, matching contract matches, a higher fee is flagged as costing 500.00 more, unknown offers refused; signed limits (50% a year, 15,000.00) flag the offer");
+    }
+    for (const path of ["/room", "/room/commitments", "/room/funding", `/room/case?run=${shortageRunId}`, "/room/safety", "/room/safety?tab=limits", "/room/safety?tab=records", "/dev"]) {
       const res = await fetch(`${BASE}${path}`, { headers: { cookie }, redirect: "manual" });
       assert.equal(res.status, 200, `${path} renders for a signed-in owner`);
     }
-    log("pages: cash desk, commitments, case, scoreboard, mandate, evidence and the older /demo page render");
+    for (const [from, to] of [["/room/scoreboard", "/room/safety?tab=results"], ["/room/mandate", "/room/safety?tab=limits"], ["/room/evidence", "/room/safety?tab=records"]]) {
+      const res = await fetch(`${BASE}${from}`, { headers: { cookie }, redirect: "manual" });
+      assert.ok([307, 308].includes(res.status) && (res.headers.get("location") ?? "").endsWith(to), `${from} redirects to ${to}`);
+    }
+    assert.equal((await fetch(`${BASE}/demo/actions`, { headers: { cookie }, redirect: "manual" })).status, 404, "the old /demo pages are gone");
+    log("pages: today, orders and quotes, funding, plans, safety and records (three tabs) and the demo tools page render; old URLs redirect; /demo is gone");
     // The decision-room components render with the REAL API data of this story (server-side render; catches data-shape mistakes).
     {
       const { renderToString } = await import("react-dom/server");
@@ -220,7 +316,7 @@ async function main() {
         ...caseNow.authorisations.map((a: any) => renderToString(h(parts.ExecutionPanel, { auth: a, names, cur: "GBP", busy: false, onExecute: () => {} }))),
         ...caseNow.authorisations.filter((a: any) => a.execution?.verification).map((a: any) => renderToString(h(parts.VerificationPanel, { v: a.execution.verification, cur: "GBP" }))),
       ].join("");
-      assert.ok(html.includes("Do nothing") && html.includes("Verification passed") && html.includes("Scheduled in the sandbox bank"), "components render the story's data");
+      assert.ok(html.includes("Do nothing") && html.includes("Verification passed") && html.includes("Scheduled in the practice bank"), "components render the story's data");
       const lines = (await api(`/api/business/${biz}/room/forecast?runId=${lastRun.id}&planId=${lastRun.plans[0].id}&authorisationId=${finalAuth}`)).json;
       const chart = renderToString(h(Chart, { currency: "GBP", reserveMinor: lines.reserveMinor, series: [{ key: "a", label: "Do nothing", weeks: lines.doNothing.weeks, color: "#000" }, { key: "b", label: "Executed", weeks: lines.agreed.weeks, color: "#0a0" }] }));
       assert.ok(chart.includes("<svg"));

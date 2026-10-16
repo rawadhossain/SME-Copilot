@@ -2,7 +2,7 @@
 // plan, build the plans from the deterministic search with templated rationale. The product works with no AI at all.
 import { sortLevers, type Lever, type PlanSubmission, type PlanView } from "@/domain/plan";
 import { searchPlans, type SearchedPlan } from "@/engine/plans";
-import { assumptionsFor, buildPlanView, baseEventsOf, describeLever, formatMinor, leverBounds } from "./plan-builder";
+import { assumptionsFor, buildPlanView, baseEventsOf, describeLever, formatMinor, isRunnable, leverBounds } from "./plan-builder";
 import type { AgentToolContext } from "./context";
 import { LEVER_KINDS } from "@/domain/plan";
 
@@ -29,7 +29,7 @@ export function deterministicPlans(ctx: AgentToolContext): { plans: PlanView[]; 
     horizonWeeks: ctx.horizonWeeks, financeCapBps: b.finance_invoice.available ? b.finance_invoice.advanceBps.max : null, allowedKinds, topN: 40,
     constraints: ctx.constraints, financeFeeBps: ctx.financeFeeBps, earlyDiscountCapBps: b.early_payment_discount.available ? b.early_payment_discount.discountBps.max : null,
   });
-  const pool = [...r.ranked, ...r.pareto];
+  const pool = [...r.ranked, ...r.pareto].filter((p) => isRunnable(ctx, p.levers));
   const chosen: SearchedPlan[] = [];
   for (const p of pool) {
     if (chosen.length >= 3) break;
