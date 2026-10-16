@@ -67,7 +67,7 @@ Nadia runs a 14-person packaging distributor (an invented example). A grocery ch
 - She uploads the order and the supplier quote. The **document reader** pulls out the amounts and dates. A separate scan looks for text that tries to give instructions. She confirms the key figures herself.
 - The **cash engine** shows a hole in about week 5 and ranks what causes it: the supplier balance, the supplier deposit, and a customer who always pays late.
 - The **planner** offers plans such as "ask the buyer for a 20% deposit, apply for invoice finance, ask a slow payer to pay sooner". Code computes the cash effect of each plan. The model supplies no numbers.
-- She edits a term, reads and adjusts the letters to each counterparty, then **signs** with her password and a drawn signature. A second approver confirms.
+- She edits a term, reads and adjusts the letters to each counterparty, then **signs** with her password and a drawn signature. Because the payments are large, the plan then waits: a second person with an approver account signs in as themselves and confirms it with their own password. Nobody ever types another person's password.
 - The system sends the proposals. The buyer will only give a 10% deposit, which is outside what she signed. The system **stops, rolls back and tells her**. She revises the terms herself or asks the agent to re-plan inside what the buyer accepts.
 - After the new plan runs, an **independent verifier** recomputes the forecast from the terms actually agreed and compares it with what was promised. A difference is reported plainly.
 

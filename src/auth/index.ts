@@ -109,17 +109,6 @@ export async function verifyStepUp(db: Db, session: Session, password: unknown, 
   if (!ok) throw new AuthError("forbidden", "Your password was not accepted, so nothing was signed.");
 }
 
-/** The second confirmation: a DIFFERENT user with the approver role in the same business re-enters their own password. */
-export async function verifySecondApprover(db: Db, session: Session, input: unknown, purpose: string): Promise<string> {
-  const i = (input ?? {}) as { email?: unknown; password?: unknown };
-  const email = typeof i.email === "string" ? i.email.trim().toLowerCase() : "";
-  const [user] = email ? await db.select().from(ownerUsers).where(eq(ownerUsers.email, email)) : [];
-  const ok = !!user && typeof i.password === "string" && verifyPassword(i.password, user.passwordHash) && user.id !== session.user.id && user.role === "approver" && user.businessId === session.user.businessId;
-  await appendActionRecord(db, { businessId: session.businessId, event: ok ? ACTION_EVENTS.AUTH_SECOND_APPROVAL : ACTION_EVENTS.AUTH_SECOND_APPROVAL_FAILED, actor: "owner", detail: { by: email || null, requestedBy: session.user.email, purpose } });
-  if (!ok || !user) throw new AuthError("forbidden", "The second approver was not accepted (it must be a different approver account in this business).");
-  return user.displayName;
-}
-
 /** A session may work in its user's own business or in a business flagged as a demo clone. */
 export async function switchBusiness(db: Db, session: Session, businessId: string) {
   const [b] = await db.select().from(businesses).where(eq(businesses.id, businessId));

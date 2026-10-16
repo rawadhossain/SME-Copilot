@@ -22,7 +22,7 @@ export function describeTerms(terms: PlanTerms, names: Record<string, string>, c
   for (const e of terms.entries) {
     const r = requestSchema.parse(e.request);
     const cpId = r.kind === "sandbox.send_proposal" ? r.counterpartyId : r.kind === "sandbox.submit_application" ? r.lenderId : "";
-    const counterparty = names[cpId] ?? "a counterparty";
+    const counterparty = names[cpId] ?? "the other side";
     const b = e.bound;
     const l = e.lever;
     switch (l.kind) {
@@ -48,7 +48,7 @@ export function describeTerms(terms: PlanTerms, names: Record<string, string>, c
         asks.push({ counterparty, text: `Ask to pay its overdue invoices within ${l.payWithinDays} days.`, accepts: b.kind === "chase_overdue" && b.maxDays > l.payWithinDays ? `A counter up to ${b.maxDays} days.` : "Only exactly this." });
         break;
       case "early_payment_discount":
-        asks.push({ counterparty, text: `Offer a ${pct(l.discountBps)} discount to pay ${l.daysEarly} days earlier.`, accepts: b.kind === "early_payment_discount" && b.maxDiscountBps > l.discountBps ? `A counter up to ${pct(b.maxDiscountBps)} (the mandate may be lower).` : "Only exactly this." });
+        asks.push({ counterparty, text: `Offer a ${pct(l.discountBps)} discount to pay ${l.daysEarly} days earlier.`, accepts: b.kind === "early_payment_discount" && b.maxDiscountBps > l.discountBps ? `A counter up to ${pct(b.maxDiscountBps)} (your signed limit may be lower).` : "Only exactly this." });
         break;
     }
   }
@@ -57,12 +57,12 @@ export function describeTerms(terms: PlanTerms, names: Record<string, string>, c
     asks,
     then: [
       "Anything outside the accepted terms stops the plan: nothing is committed or paid, the agreements already reached are kept on hold, and you decide whether to revise the terms, ask for a re-plan or withdraw everything.",
-      "If every counterparty agrees, the system schedules only the payments and receipts those exact terms imply, each one checked again against your mandate and your projected balance.",
+      "If everyone agrees, the system schedules only the payments and receipts those exact terms imply, each one checked again against your signed limits and your projected balance.",
       "An independent check then recomputes your forecast from what was actually agreed and tells you if it differs from the plan.",
     ],
     never: [
       "Pay anyone who is not an approved payee, or move money above your signed limits.",
-      "Accept an answer outside the terms above, or act after this authorisation expires or your mandate changes.",
+      "Accept an answer outside the terms above, or act after this authorisation expires or your limits change.",
       ...(usesSupplier ? ["Pay the supplier without your second confirmation (this plan can schedule payments above the second-confirmation threshold)."] : []),
     ],
     confirmations: terms.confirmations ?? 1,

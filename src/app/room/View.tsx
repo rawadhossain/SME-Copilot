@@ -15,13 +15,14 @@ export default function CashDesk() {
   const [cases, setCases] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [late, setLate] = useState(0); // 0 = off; otherwise "if customers pay this many days late"
 
   const load = useCallback(async () => {
     if (!biz) return;
-    const [r, c] = await Promise.all([call(`/api/business/${biz}/room`), call(`/api/business/${biz}/cases`)]);
+    const [r, c] = await Promise.all([call(`/api/business/${biz}/room${late ? `?lateDays=${late}` : ""}`), call(`/api/business/${biz}/cases`)]);
     if (r.ok) setRoom(r.data); else setError(r.data.error ?? "Could not load the cash desk");
     if (c.ok) setCases(c.data);
-  }, [biz]);
+  }, [biz, late]);
   useEffect(() => { void load(); }, [load]);
 
   // While a planning run is working, show its live state (steps are saved as they happen).
@@ -42,7 +43,8 @@ export default function CashDesk() {
   }
 
   if (!room) return error ? <ErrorNote>{error}</ErrorNote> : <Loading label="Reading your books" />;
-  const f = room.forecast;
+  const doNothing = room.forecast;
+  const f = room.agreed ?? room.forecast; // the headline is the forecast WITH any terms already agreed; "do nothing" stays as a comparison line
   const sh = room.shortage;
   const roots = cases.filter((c) => !c.parentRunId);
   const latest = roots.filter((c) => c.lifecycle !== "superseded").at(-1) ?? roots.at(-1);
@@ -68,16 +70,16 @@ export default function CashDesk() {
         <Stat label="Lowest point ahead" value={money(f.minBalanceMinor, cur)} sub={`${week(f.minBalanceWeek)}${neg ? ` · first below zero: ${week(neg)}` : ""}`} tone={BigInt(f.minBalanceMinor) < 0n ? "danger" : BigInt(f.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
       </div>
 
-      {running && <Card tone="accent" title={<span className="flex items-center gap-2">The agent is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft">It is reading your books and searching for plans. Open Decisions to watch it work.</p></Card>}
+      {running && <Card tone="accent" title={<span className="flex items-center gap-2">Your assistant is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft">It is reading your books and searching for plans. Open Plans to watch it work.</p></Card>}
 
       {sh.shortage ? (
         <Card tone={tone} title={<span className="flex flex-wrap items-center gap-2">{sh.reason.kind === "below_zero" ? "Heads up: you would run out of cash" : "Heads up: you would dip below your safety cushion"} <Chip tone={tone}>{sh.reason.kind === "below_zero" ? "below zero" : "below cushion"}</Chip></span>}
-          right={latest ? <Btn href={`/room/case?run=${latest.runId}`}>See the options</Btn> : <Btn onClick={check} busy={busy}>Ask the agent for options</Btn>}>
+          right={latest ? <Btn href={`/room/case?run=${latest.runId}`}>See the options</Btn> : <Btn onClick={check} busy={busy}>Ask your assistant for options</Btn>}>
           <p className="text-sm">
             Lowest balance <b className="num">{money(sh.reason.minBalanceMinor, cur)}</b> in {week(sh.reason.minBalanceWeek)}.
             {sh.reason.firstNegativeWeek && <> First below zero in {week(sh.reason.firstNegativeWeek)}.</>} You would be short of your cushion by <b className="num">{money(sh.reason.shortfallMinor, cur)}</b>.
           </p>
-          <p className="mt-1 text-xs text-ink-soft">Found by a fixed calculation on your numbers, not by the AI. The agent can only suggest; nothing happens until you approve.</p>
+          <p className="mt-1 text-xs text-ink-soft">Worked out from your own numbers, not guessed. Your assistant can only suggest. Nothing happens until you approve.</p>
         </Card>
       ) : (
         <Card tone="good" title={<span className="flex items-center gap-2">No shortage in the next 20 weeks <Chip tone="good">healthy</Chip></span>}>
@@ -98,26 +100,43 @@ export default function CashDesk() {
         <Card title="How Ledgerhand works" subtitle="Four steps. You stay in charge of every one that matters.">
           <ol className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
             {[
-              ["1. You add an order or quote", "Drop in a customer order or supplier quote. It is read, and you confirm what it says."],
+              ["1. You add an order or quote", "Paste a customer order or a supplier quote. It is read, and you confirm what it says."],
               ["2. It spots trouble early", "Your cash is projected 20 weeks ahead. If you would run short, it tells you when and why."],
-              ["3. It suggests fixes, you choose", "It negotiates only inside limits you set: for example, delay a supplier payment or ask a customer for a deposit."],
-              ["4. It acts, then proves it", "Everything is checked by a separate verifier and written to a tamper-evident log you can export."],
+              ["3. It suggests fixes, you choose", "It asks suppliers, customers or lenders for better terms, only inside limits you set."],
+              ["4. It acts, then proves it", "Everything is checked separately and written to a record nobody can quietly change."],
             ].map(([t, d]) => <li key={t} className="rounded-xl border border-line bg-paper p-3"><p className="font-medium">{t}</p><p className="mt-1 text-ink-soft">{d}</p></li>)}
           </ol>
         </Card>
       )}
 
-      <Card title="Your cash, week by week" subtitle={room.commitments.length ? "With your confirmed commitments (solid) and without them (dashed)." : "Your books only. No commitments have been confirmed yet."}>
+      <Card title="What if customers pay late?" subtitle="Customers often pay later than their terms. See how much that would hurt."
+        right={<label className="flex items-center gap-2 text-sm"><span className="text-ink-soft">Customers pay</span>
+          <select aria-label="How late customers pay" className="rounded-lg border border-line-strong bg-white px-2 py-1.5 text-sm" value={late} onChange={(e) => setLate(Number(e.target.value))}>
+            <option value={0}>on time</option>{[7, 14, 21, 30].map((d) => <option key={d} value={d}>{d} days late</option>)}
+          </select></label>}>
+        {!room.downside ? <p className="text-sm text-ink-soft">Pick a delay to add a line to the chart below and see your lowest point.</p> : (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Lowest point" value={money(room.downside.minBalanceMinor, cur)} sub={`${week(room.downside.minBalanceWeek)} · ${money((BigInt(room.downside.minBalanceMinor) - BigInt(f.minBalanceMinor)).toString(), cur, { signed: true })} against on time`} tone={BigInt(room.downside.minBalanceMinor) < 0n ? "danger" : BigInt(room.downside.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
+            <Stat label="First below zero" value={week(room.downside.firstNegativeWeek)} tone={room.downside.firstNegativeWeek ? "danger" : "good"} />
+            <Stat label="Weeks below zero" value={room.downside.weeksBelowZero} tone={room.downside.weeksBelowZero ? "danger" : "good"} />
+            <Stat label="Closing balance" value={money(room.downside.closingMinor, cur)} />
+          </div>
+        )}
+      </Card>
+
+      <Card title="Your cash, week by week" subtitle={room.agreed ? "With the terms you have agreed (solid), against doing nothing (orange dashed) and without the new orders (grey dashed)." : room.commitments.length ? "With your confirmed orders and quotes (solid) and without them (dashed)." : "Your books only. No orders or quotes have been confirmed yet."}>
         <Chart currency={cur} reserveMinor={room.reserveMinor} series={[
-          ...(room.commitments.length ? [{ key: "books", label: "Without the new commitments", weeks: room.booksOnly.weeks, color: "#8b958f", dashed: true }] : []),
-          { key: "with", label: room.commitments.length ? "With confirmed commitments (do nothing)" : "Do nothing", weeks: f.weeks, color: "#0d5a50", firstNegativeWeek: neg },
+          ...(room.commitments.length ? [{ key: "books", label: "Without the new orders and quotes", weeks: room.booksOnly.weeks, color: "#8b958f", dashed: true }] : []),
+          ...(room.agreed ? [{ key: "nothing", label: "If you had done nothing", weeks: doNothing.weeks, color: "#b45309", dashed: true, firstNegativeWeek: doNothing.firstNegativeWeek }] : []),
+          ...(room.downside ? [{ key: "late", label: `If customers pay ${room.downside.days} days late`, weeks: room.downside.weeks, color: "#7c3aed", dashed: true, firstNegativeWeek: room.downside.firstNegativeWeek }] : []),
+          { key: "with", label: room.agreed ? "With your agreed plan" : room.commitments.length ? "With confirmed orders and quotes" : "Your books", weeks: f.weeks, color: "#0d5a50", firstNegativeWeek: neg },
         ]} />
       </Card>
 
       <Card title="Orders and quotes you have confirmed" subtitle="Each one is already counted in the forecast above."
         right={<Btn variant="secondary" href="/room/commitments">Add an order or quote</Btn>}>
         {room.commitments.length === 0 ? (
-          <Empty title="Nothing to plan around yet" action={<Btn href="/room/commitments">Upload a purchase order or quote</Btn>}>The agent starts when a new commitment is confirmed, or when the forecast shows a shortage.</Empty>
+          <Empty title="Nothing to plan around yet" action={<Btn href="/room/commitments">Upload a purchase order or quote</Btn>}>Your assistant starts when a new order or quote is confirmed, or when the forecast shows a shortage.</Empty>
         ) : (
           <div className="overflow-x-auto"><table className="w-full text-sm">
             <thead><tr><Th>Date</Th><Th>What</Th><Th right>Amount</Th><Th>Confidence</Th></tr></thead>

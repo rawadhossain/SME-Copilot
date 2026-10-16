@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { businesses } from "@/db/schema";
 import { sessionFromRequest } from "@/auth";
+import { demoToolsEnabled } from "@/lib/demo-tools";
 
 // Who am I, which business am I working in, and the CSRF token to send with changes.
 export async function GET(req: Request) {
@@ -20,5 +21,6 @@ export async function GET(req: Request) {
     user: s.user, csrfToken: s.csrfToken, expiresAt: s.expiresAt,
     business: { id: b.id, name: b.name, currency: b.baseCurrency, isSynthetic: b.isSynthetic, isTest: b.isTest },
     businesses: listed,
+    demoTools: demoToolsEnabled(),
   });
 }

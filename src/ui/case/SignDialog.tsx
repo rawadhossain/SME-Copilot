@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Sign a plan, in three steps. 1) Read exactly what the signature covers (plain language, built from the same terms that are hashed and signed).
 // 2) Write the proposal letters: a professional first draft per counterparty that you edit like a document; the generated terms stay locked under it.
-// 3) Sign: draw your signature and re-enter your password (step-up). A plan with large supplier payments needs a second, different approver.
+// 3) Sign: draw your signature and re-enter your password (step-up). A plan with large supplier payments then waits for a second, different approver, who confirms from their own sign-in.
 // The letters and the drawing are bound by the signature: once signed, neither can change.
 import { useEffect, useMemo, useState } from "react";
 import { Btn, Chip, ErrorNote, Field, Loading, Modal, Seal, inputClass } from "../kit";
@@ -13,7 +13,7 @@ import { SignaturePad } from "./SignaturePad";
 
 const STEPS = ["Review the terms", "Write the proposals", "Sign"] as const;
 
-export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: boolean; onClose: () => void; runId: string; planId: string | null; onSigned: (authorisationId: string) => void }) {
+export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: boolean; onClose: () => void; runId: string; planId: string | null; onSigned: (authorisationId: string, status?: string) => void }) {
   const { session } = useSession();
   const biz = session?.business.id;
   const [prev, setPrev] = useState<any>(null);
@@ -27,13 +27,11 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
   const [rewriteNote, setRewriteNote] = useState<any>(null);
   const [undo, setUndo] = useState<Record<string, { subject: string; paragraphs: string[] }>>({});
   const [password, setPassword] = useState("");
-  const [email, setEmail] = useState("finance@mercer-vale.example");
-  const [password2, setPassword2] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!open || !planId) return;
-    setPrev(null); setError(null); setPassword(""); setPassword2(""); setStep(0); setSignature(null); setLetters({}); setTab(null); setRewriteText(""); setRewriteNote(null); setUndo({});
+    setPrev(null); setError(null); setPassword(""); setStep(0); setSignature(null); setLetters({}); setTab(null); setRewriteText(""); setRewriteNote(null); setUndo({});
     void call(`/api/business/${biz}/plan-authorisations/preview`, { runId, planId }).then((r) => {
       if (!r.ok) { setError(r.data.error ?? "Could not prepare the signing summary"); return; }
       setPrev(r.data);
@@ -43,7 +41,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
   }, [open, planId, runId, biz]);
 
   const cps: { id: string; name: string; role: string }[] = prev?.counterparties ?? [];
-  const nameOf = (id: string) => (cps.find((c) => c.id === id)?.name ?? "a counterparty").replace(" (SYNTHETIC)", "");
+  const nameOf = (id: string) => (cps.find((c) => c.id === id)?.name ?? "the other side").replace(" (SYNTHETIC)", "");
   const dateText = useMemo(() => new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }), []);
   const lettersOk = cps.length > 0 && cps.every((c) => letters[c.id]?.subject.trim() && letters[c.id]?.paragraphs.some((p) => p.trim()));
 
@@ -62,10 +60,10 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
   async function sign() {
     setBusy(true); setError(null);
     const second = prev.needsSecondConfirmation;
-    const r = await call(`/api/business/${biz}/plan-authorisations`, { runId, planId, confirmations: second ? 2 : 1, password, letters, signatureImage: signature, ...(second ? { secondApprover: { email, password: password2 } } : {}) });
+    const r = await call(`/api/business/${biz}/plan-authorisations`, { runId, planId, confirmations: second ? 2 : 1, password, letters, signatureImage: signature });
     setBusy(false);
-    if (r.ok) { onSigned(r.data.authorisationId); onClose(); return; }
-    setError(r.status === 422 ? `Not signed. Your limits block this plan: ${(r.data.problems?.[0] ?? r.data.gates?.find((g: any) => g.decision === "deny")?.reasons?.[0] ?? "see the mandate page")}` : r.data.error ?? "Could not sign");
+    if (r.ok) { onSigned(r.data.authorisationId, r.data.status); onClose(); return; }
+    setError(r.status === 422 ? `Not signed. Your limits block this plan: ${(r.data.problems?.[0] ?? r.data.gates?.find((g: any) => g.decision === "deny")?.reasons?.[0] ?? "see Your limits")}` : r.data.error ?? "Could not sign");
   }
 
   const s = prev?.summary;
@@ -90,7 +88,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
 
           {!denied && step === 0 && (
             <>
-              <p className="text-ink-soft">By signing, you let the system do <b>only</b> the following, and nothing else. It is checked again against your mandate before every step.</p>
+              <p className="text-ink-soft">By signing, you let the system do <b>only</b> the following, and nothing else. It is checked again against your limits before every step.</p>
               <section>
                 <h3 className="mb-1 font-medium">It will ask</h3>
                 <ul className="space-y-2">{s.asks.map((a: any, i: number) => (
@@ -103,7 +101,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
 
           {!denied && step === 1 && (
             <>
-              <p className="text-ink-soft">Each counterparty receives a short professional letter with the terms underneath. This is a first draft written for you: change any line, add or remove paragraphs. After you sign, the letters cannot be changed (to change one, cancel and start again).</p>
+              <p className="text-ink-soft">Each customer, supplier or lender receives a short professional letter with the terms underneath. This is a first draft written for you: change any line, add or remove paragraphs. After you sign, the letters cannot be changed (to change one, cancel and start again).</p>
               {cps.length > 1 && (
                 <div role="tablist" aria-label="Letters" className="flex flex-wrap gap-2">
                   {cps.map((c) => <button key={c.id} role="tab" aria-selected={tab === c.id} onClick={() => setTab(c.id)} className={`rounded-lg border px-3 py-1.5 text-sm ${tab === c.id ? "border-accent bg-accent-soft font-medium text-accent" : "border-line hover:bg-neutral-soft"}`}>{nameOf(c.id)}</button>)}
@@ -138,7 +136,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
           {!denied && step === 2 && (
             <>
               <section className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-white/70 p-3">
-                <Seal>Mandate version {prev.mandateVersion}</Seal><span>Valid until <b>{dateTime(prev.expiresAt)}</b></span>
+                <Seal>Limits version {prev.mandateVersion}</Seal><span>Valid until <b>{dateTime(prev.expiresAt)}</b></span>
                 <span className="text-xs text-ink-soft">The terms are fingerprinted: <span className="font-mono">{short(prev.termsHash, 12)}</span>. Your letters and your drawn signature are fingerprinted into the same signature.</span>
               </section>
               <section className="space-y-3">
@@ -150,11 +148,8 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
                 <Field label={`Your password (${session?.user.displayName})`}><input className={inputClass} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
                 {prev.needsSecondConfirmation && (
                   <div className="rounded-lg border border-caution/40 bg-caution-soft p-3">
-                    <p className="mb-2 flex items-center gap-2 text-caution"><Chip tone="caution">second confirmation</Chip>This plan can schedule supplier payments above your mandate&apos;s threshold, so a different approver must confirm too.</p>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Field label="Second approver email"><input className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-                      <Field label="Their password"><input className={inputClass} type="password" autoComplete="off" value={password2} onChange={(e) => setPassword2(e.target.value)} /></Field>
-                    </div>
+                    <p className="flex items-center gap-2 text-caution"><Chip tone="caution">second approver needed</Chip>This plan can schedule supplier payments above the threshold in your limits.</p>
+                    <p className="mt-2 text-ink-soft">After you sign, the plan waits. A <b>different</b> approver signs in as themselves and confirms it with their own password. Nothing is sent or paid until they do. You never enter anyone else&apos;s password.</p>
                   </div>
                 )}
               </section>
@@ -168,7 +163,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
               <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
               {!denied && step === 0 && <Btn onClick={() => setStep(1)}>Next: write the proposals</Btn>}
               {!denied && step === 1 && <Btn disabled={!lettersOk} onClick={() => setStep(2)}>Next: sign</Btn>}
-              {!denied && step === 2 && <Btn busy={busy} disabled={!signature || !password || (prev.needsSecondConfirmation && !password2)} onClick={sign}>Sign and authorise</Btn>}
+              {!denied && step === 2 && <Btn busy={busy} disabled={!signature || !password} onClick={sign}>{prev.needsSecondConfirmation ? "Sign and send for second approval" : "Sign and authorise"}</Btn>}
             </div>
           </div>
         </div>

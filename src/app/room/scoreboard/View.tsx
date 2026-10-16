@@ -18,7 +18,7 @@ export default function Scoreboard() {
   const s = sb.summary;
   return (
     <div className="space-y-6">
-      <div><h1 className="display text-3xl">Results</h1><p className="text-ink-soft">What doing nothing would have cost against what the agent&apos;s plan achieved. Every figure is calculated or counted from the tamper-evident log, never written by the AI.</p></div>
+      <div><h2 className="display text-2xl">Results</h2><p className="text-ink-soft">What doing nothing would have cost against what your assistant&apos;s plan achieved. Every figure is calculated or counted from the tamper-evident log, never written by the AI.</p></div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Cases" value={s.commitmentsAndShortages} />
         <Stat label="Executed" value={s.executed} />
@@ -26,7 +26,7 @@ export default function Scoreboard() {
         <Stat label="Owner approvals" value={s.ownerApprovals} sub="signatures you gave" />
         <Stat label="Denied or blocked" value={s.deniedOrBlocked} sub="actions the system refused" />
       </div>
-      {sb.entries.length === 0 && <Empty title="Nothing to score yet">Cases appear here once the agent has proposed plans for a commitment or a shortage.</Empty>}
+      {sb.entries.length === 0 && <Empty title="Nothing to score yet">Cases appear here once your assistant has proposed plans for an order or quote or a shortage.</Empty>}
       {sb.entries.map((e: any) => {
         const dn = e.doNothing, ex = e.executedPlan;
         const max = Math.max(1, ...[dn?.minBalanceMinor, ex?.minBalanceMinor].filter(Boolean).map((v: string) => Math.abs(Number(BigInt(v) / 100n))));

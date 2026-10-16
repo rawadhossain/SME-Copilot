@@ -75,7 +75,7 @@ export default function Commitments() {
     if (!r.ok) { setMsg({ tone: "danger", text: r.data.error ?? "Refused" }); return; }
     if (what === "confirm") {
       const s = r.data.shortage;
-      setMsg({ tone: "good", text: s?.status === "planned" ? "Confirmed and logged. The forecast now shows a shortage and the agent has proposed plans." : s?.status === "existing_run" ? "Confirmed and logged. The agent already has plans for this shortage." : "Confirmed and logged. The forecast has been updated." });
+      setMsg({ tone: "good", text: s?.status === "planned" ? "Confirmed and logged. The forecast now shows a shortage and your assistant has proposed plans." : s?.status === "existing_run" ? "Confirmed and logged. Your assistant already has plans for this shortage." : "Confirmed and logged. The forecast has been updated." });
     } else setMsg({ tone: "neutral", text: "Rejected and logged. Nothing from this document is used." });
     await load();
     await openDoc(id);
@@ -100,19 +100,19 @@ export default function Commitments() {
 
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
-          <Card title="Add a document" subtitle="Synthetic samples are provided.">
-            <div className="space-y-2">
-              {samples.length > 1 && <Btn busy={busy} onClick={async () => { for (const x of samples) await submit(x.filename, x.kind, x.text); setMsg({ tone: "neutral", text: "Both documents were read. Review each one, then confirm both: the agent plans once, after the last confirmation." }); }}>Add both sample documents</Btn>}
+          <Card title="Add a document" subtitle="Paste the text of an order or a quote, or choose a text file.">
+            {samples.length > 0 && <details className="mb-4 text-sm"><summary className="cursor-pointer text-accent">Try it with sample documents</summary><div className="mt-3 space-y-2">
+              {samples.length > 1 && <Btn busy={busy} onClick={async () => { for (const x of samples) await submit(x.filename, x.kind, x.text); setMsg({ tone: "neutral", text: "Both documents were read. Review each one, then confirm both: your assistant plans once, after the last confirmation." }); }}>Add both sample documents</Btn>}
               {samples.map((s) => <Btn key={s.filename} variant="secondary" className="w-full justify-start" busy={busy} onClick={() => submit(s.filename, s.kind, s.text)}>Use sample: {s.title}</Btn>)}
-            </div>
-            <details className="mt-4 text-sm"><summary className="cursor-pointer text-accent">Paste or upload your own</summary>
-              <div className="mt-3 space-y-3">
+            </div></details>}
+            <div className="text-sm">
+              <div className="space-y-3">
                 <Field label="Type"><select className={inputClass} value={kind} onChange={(e) => setKind(e.target.value)}><option value="purchase_order">Purchase order</option><option value="supplier_quote">Supplier quote</option></select></Field>
                 <Field label="Text" hint="or choose a .txt/.md file"><textarea className={`${inputClass} h-32 font-mono text-xs`} value={pasted} onChange={(e) => setPasted(e.target.value)} /></Field>
                 <input type="file" accept=".txt,.md,text/plain" aria-label="Upload a text document" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setPasted(await f.text()); }} className="text-xs" />
                 <Btn disabled={!pasted.trim()} busy={busy} onClick={() => submit("pasted-document.txt", kind, pasted)}>Read this document</Btn>
               </div>
-            </details>
+            </div>
           </Card>
           <Card title="Your documents">
             {docs === null ? <Loading /> : docs.length === 0 ? <p className="text-sm text-ink-soft">None yet.</p> : (
@@ -126,7 +126,7 @@ export default function Commitments() {
         </div>
 
         <div>
-          {!ex ? <Empty title="Choose a document">Open one from the list, or use a sample, to see what the reader found and which claims were verified.</Empty> : (
+          {!ex ? <Empty title="Choose a document">Open one from your list to see what was read from it and which figures were checked against the text.</Empty> : (
             <Card title={open.document.filename} subtitle={`Read by ${ex.model} · prompt ${ex.promptVersion}`} right={<Chip tone={(STATUS[ex.status] ?? ["", "neutral"])[1] as Tone}>{(STATUS[ex.status] ?? [ex.status])[0]}</Chip>}>
               {suspicious.length > 0 && (
                 <div role="alert" className="mb-4 rounded-xl border-2 border-danger/50 bg-danger-soft p-3 text-sm text-danger">

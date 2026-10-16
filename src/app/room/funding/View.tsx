@@ -115,7 +115,7 @@ export default function Funding() {
     setBusy(true); setError(null); setSaved(null);
     const r = await call(`/api/business/${biz}/funding/offers`, { offers: forms.map(toBody) }, "PUT");
     setBusy(false);
-    if (r.ok) setSaved(`Saved ${r.data.saved} offer${r.data.saved === 1 ? "" : "s"}. The planning agent can now see the numbers, without lender names.`);
+    if (r.ok) setSaved(`Saved ${r.data.saved} offer${r.data.saved === 1 ? "" : "s"}. Your assistant can now see the numbers, without lender names.`);
     else setError(r.data?.error === "Invalid request" ? "Some fields are missing or not valid, so nothing was saved." : (r.data?.error ?? "Could not save"));
   }
   async function checkContract() {
