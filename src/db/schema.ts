@@ -602,3 +602,24 @@ export const loginAttempts = pgTable(
   },
   (t) => [index("login_attempts_key_idx").on(t.key, t.at)],
 );
+
+// ---------- Funding offers typed by the owner (Phase K) ----------
+// The validated offer (money as integer strings) plus the owner's form, so the page can show it again. Replaced as a set: saving archives the
+// previous active offers. Append-style: the app role can only set archived_at after insert.
+export const fundingOffers = pgTable(
+  "funding_offers",
+  {
+    id: id(),
+    businessId: businessId(),
+    label: text("label").notNull(),
+    offer: jsonb("offer").notNull(),
+    form: jsonb("form").notNull(),
+    offerHash: text("offer_hash").notNull(),
+    createdAt: createdAt(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("funding_offers_business_idx").on(t.businessId, t.createdAt),
+    uniqueIndex("funding_offers_active_label_idx").on(t.businessId, t.label).where(sql`${t.archivedAt} is null`),
+  ],
+);

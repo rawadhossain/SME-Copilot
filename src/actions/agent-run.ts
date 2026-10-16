@@ -6,7 +6,7 @@
 //   4. logs agent.run_started, agent.plans_submitted, agent.run_failed to the hash-chained action log.
 // It never creates action proposals, approvals, payments, threads or applications. Execution is Batch 8.
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { appendActionRecord } from "@/actionlog";
 import { ACTION_EVENTS, ActionError, type Db } from "./types";
@@ -14,7 +14,8 @@ import { loadGateState, loadSignedMandate } from "./state";
 import { guardRanking, demoteBlocked, buildAgentTools, buildMessages, deterministicPlans, AGENT_PURPOSE, collectNumbers, doNothingSummary, type AgentToolContext, type PendingEvent } from "@/agent";
 import { getGateway, type Gateway } from "@/ai";
 import { dbCallLogger } from "@/ai/db-logger";
-import { agentRuns, agentSteps, counterparties, documents, extractions, plans as plansTable } from "@/db/schema";
+import { agentRuns, agentSteps, counterparties, documents, extractions, fundingOffers, plans as plansTable } from "@/db/schema";
+import { financingOfferSchema } from "@/domain/financing-offer";
 import type { PlanView } from "@/domain/plan";
 import { assumedFeeBps, type Constraint } from "@/domain/constraints";
 import { shortageReasonSchema } from "@/domain/shortage";
@@ -92,12 +93,16 @@ export async function buildContext(db: Db, businessId: string, mustInclude: stri
   const pending = await loadPending(db, businessId, mustInclude);
   const cps = await db.select({ id: counterparties.id, name: counterparties.name, role: counterparties.role }).from(counterparties).where(eq(counterparties.businessId, businessId)).orderBy(asc(counterparties.name));
   const events = pending.map((p) => p.event);
+  // Funding offers the owner saved (validated again on the way in; a row that no longer validates is left out).
+  const offerRows = await db.select({ offer: fundingOffers.offer }).from(fundingOffers).where(and(eq(fundingOffers.businessId, businessId), isNull(fundingOffers.archivedAt))).orderBy(asc(fundingOffers.createdAt), asc(fundingOffers.label));
+  const savedOffers = offerRows.flatMap((r) => { const p = financingOfferSchema.safeParse(r.offer); return p.success ? [p.data] : []; });
   const seen = new Set<string>();
   collectNumbers(pending.map((p) => ({ amountMinor: p.event.amountMinor.toString(), date: p.event.date })), seen);
   return {
     businessId, asOf: input.asOf, currency: input.currency, horizonWeeks: PLANNING_HORIZON_WEEKS, input, pending,
     counterparties: cps, parties: resolveParties(events, cps), mandate: await loadSignedMandate(db, businessId), gateState: await loadGateState(db, businessId),
     constraints, financeFeeBps: assumedFeeBps(constraints, FINANCE_FEE_BPS_ASSUMPTION), shortage: null,
+    ...(savedOffers.length > 0 ? { fundingOffers: savedOffers } : {}),
     seen, notes: [], submitted: null,
   };
 }

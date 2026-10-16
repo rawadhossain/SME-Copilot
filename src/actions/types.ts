@@ -54,6 +54,7 @@ export const ACTION_EVENTS = {
   AUTH_SECOND_APPROVAL_FAILED: "auth.second_approval_failed",
   DEMO_CLONE_CREATED: "demo.clone_created",
   EVIDENCE_EXPORTED: "evidence.exported",
+  FUNDING_OFFERS_SAVED: "funding.offers_saved",
 } as const;
 
 export type ActionEvent = (typeof ACTION_EVENTS)[keyof typeof ACTION_EVENTS];

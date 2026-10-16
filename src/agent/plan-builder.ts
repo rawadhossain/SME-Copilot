@@ -144,6 +144,16 @@ export function impliedPaymentBlockers(ctx: AgentToolContext, events: { kind: st
   return out;
 }
 
+/** True when none of the payments a lever set implies breaks a signed limit; the search offers only such plans. Pure. */
+export function isRunnable(ctx: AgentToolContext, levers: Lever[]): boolean {
+  try {
+    const sim = simulateLevers(ctx.input, baseEventsOf(ctx), levers, { horizonWeeks: ctx.horizonWeeks, financeFeeBps: ctx.financeFeeBps });
+    return impliedPaymentBlockers(ctx, sim.events).length === 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Pure gate dry-run per lever. Writes nothing. */
 export function dryRun(ctx: AgentToolContext, levers: Lever[]): LeverCheck[] {
   const base = baseEventsOf(ctx);

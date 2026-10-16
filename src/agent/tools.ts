@@ -7,7 +7,8 @@ import type { AgentTool } from "@/ai";
 import { leverSchema, submitPlansInputSchema, LEVER_KINDS, type Lever, type PlanView } from "@/domain/plan";
 import { attributeDrivers, buildForecast, computeLateness, medianInt, type Forecast } from "@/engine";
 import { searchPlans, simulateLevers, type SearchedPlan } from "@/engine/plans";
-import { buildPlanView, baseEventsOf, doNothingSummary, dryRun, leverBounds, leverProblems, mandateOf } from "./plan-builder";
+import { compareOffers } from "@/engine/financing";
+import { buildPlanView, baseEventsOf, doNothingSummary, dryRun, isRunnable, leverBounds, leverProblems, mandateOf } from "./plan-builder";
 import { collectNumbers } from "./prose";
 import type { AgentToolContext, PendingEvent, ValidationNote } from "./context";
 
@@ -197,11 +198,13 @@ export function buildAgentTools(ctx: AgentToolContext): Record<string, AgentTool
         if (!b.mandateValid) return err(`The signed mandate is invalid: ${b.mandateProblem}`);
         const allowedKinds = LEVER_KINDS.filter((k) => b[k].available && (k !== "finance_invoice" || a.allowFinance));
         const r = searchPlans(ctx.input, baseEvents, ctx.parties, {
-          horizonWeeks: ctx.horizonWeeks, financeCapBps: b.finance_invoice.available ? b.finance_invoice.advanceBps.max : null, allowedKinds, topN: a.topN,
+          horizonWeeks: ctx.horizonWeeks, financeCapBps: b.finance_invoice.available ? b.finance_invoice.advanceBps.max : null, allowedKinds, topN: Math.max(a.topN, 40),
           maxCounterparties: a.maxCounterparties, requireAtLeast: a.requireAtLeast ?? null, maxCostMinor: a.maxCostMinor ? BigInt(a.maxCostMinor) : null,
           constraints: ctx.constraints, financeFeeBps: ctx.financeFeeBps, earlyDiscountCapBps: b.early_payment_discount.available ? b.early_payment_discount.discountBps.max : null,
         });
-        return withSeen(ctx, { ok: true, evaluated: r.evaluated, doNothing: r.baseline.metrics, ranked: r.ranked.map(planOut), pareto: r.pareto.slice(0, 8).map(planOut) });
+        // Plans whose implied payments break a signed limit are never offered (they would be stopped at run time).
+        const runnable = (p: SearchedPlan) => isRunnable(ctx, p.levers);
+        return withSeen(ctx, { ok: true, evaluated: r.evaluated, doNothing: r.baseline.metrics, ranked: r.ranked.filter(runnable).slice(0, a.topN).map(planOut), pareto: r.pareto.filter(runnable).slice(0, 8).map(planOut) });
       },
     },
 
@@ -245,6 +248,33 @@ export function buildAgentTools(ctx: AgentToolContext): Record<string, AgentTool
       },
     },
   };
+
+  // Funding comparison (Phase K). Offered to the model ONLY when the owner has saved offers, so a run without offers sends exactly the same
+  // request as before. Read-only. The model sees "offer1", "offer2"... and product types, never the lender's name or the owner's label: those
+  // are free text. Every figure comes from the engine and joins the numbers the model's prose may use.
+  if (ctx.fundingOffers && ctx.fundingOffers.length > 0) {
+    const saved = ctx.fundingOffers;
+    tools.compare_financing_options = {
+      description: "Compare the funding offers the owner has saved with NOT borrowing: total cost, estimated yearly cost, the effect on the lowest balance, debt service coverage and warnings, all computed by the engine. Read-only; it does not apply for anything. Mention only the figures it returns, and say plainly when not borrowing is enough.",
+      parameters: empty,
+      execute: () => {
+        const m = mandateOf(ctx);
+        const lim = m.ok ? m.mandate.limits : null;
+        const c = compareOffers(ctx.input, baseEvents, saved, { horizonWeeks: ctx.horizonWeeks, maxAnnualisedCostBps: lim?.maxFundingCostBps ?? null, maxAmountMinor: lim?.maxFundingAmountMinor ?? null });
+        const ref = new Map(saved.map((o, i) => [o.id, `offer${i + 1}`]));
+        return withSeen(ctx, {
+          ok: true,
+          notBorrowing: { lowestBalanceMinor: c.doNotBorrow.minBalanceMinor.toString(), lowestBalanceWeek: c.doNotBorrow.minBalanceWeek, firstNegativeWeek: c.doNotBorrow.firstNegativeWeek, weeksBelowReserve: c.doNotBorrow.weeksBelowReserve, borrowingNeeded: c.borrowingNeeded },
+          offers: c.offers.map((o) => ({
+            ref: ref.get(o.offerId), product: o.product, totalCostMinor: o.cost.totalCostMinor.toString(), costOfAmountBps: o.cost.costOfAmountBps, simpleYearlyCostBps: o.cost.annualisedCostBps,
+            lowestBalanceMinor: o.summary.minBalanceMinor.toString(), lowestBalanceWeek: o.summary.minBalanceWeek, changeInLowestBalanceMinor: o.lowestBalanceImprovementMinor.toString(),
+            coverRatioX100: o.dscr.ratioX100, withinSignedCostLimit: o.withinCostCap, withinSignedAmountLimit: o.withinAmountCap, warnings: o.warnings,
+          })),
+          cheapestFirst: c.cheapestFirst.map((id) => ref.get(id)),
+        });
+      },
+    };
+  }
   return tools;
 }
 

@@ -7,3 +7,4 @@ export { attributeDrivers, type Driver, type DriverAnalysis } from "./drivers";
 export * from "./json";
 export { applyTermChanges, adjustmentsOf, type TermChanges } from "./term-changes";
 export * from "./plans";
+export * from "./financing";

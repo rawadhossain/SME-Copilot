@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGateway, RECORDINGS_DIR, type GatewayConfig } from "../src/ai";
 import { planId, type Lever } from "../src/domain/plan";
-import { applyTermChanges, buildForecast, type TermChanges } from "../src/engine";
+import { adjustmentsOf, applyTermChanges, buildForecast, type TermChanges } from "../src/engine";
 import { searchPlans, simulateLevers } from "../src/engine/plans";
 import { sampleOrderEvents } from "../src/engine/samples/grocery-order";
 import { signMandate } from "../src/gate/owner-signing";
@@ -117,11 +117,13 @@ async function main() {
         if (l.kind === "supplier_defer_balance") ch.supplierBalanceDeferralDays = l.daysAfterShipment;
         if (l.kind === "buyer_request_deposit") ch.buyerDepositBps = l.percentBps;
         if (l.kind === "finance_invoice") ch.invoiceFinance = { advanceBps: l.advanceBps, feeBps: 200 };
+        if (l.kind === "chase_overdue") ch.chase = { counterpartyId: l.counterpartyId, payWithinDays: l.payWithinDays };
+        if (l.kind === "early_payment_discount") ch.earlyPayment = { counterpartyId: l.counterpartyId, daysEarly: l.daysEarly, discountBps: l.discountBps };
       }
       const events = applyTermChanges(sample, ch);
-      const f = buildForecast(ctx0.input, { events, horizonWeeks: 20 });
+      const f = buildForecast(ctx0.input, { events, horizonWeeks: 20, adjustments: adjustmentsOf(ch) });
       const total = (es: typeof events) => es.reduce((a, e) => a + e.amountMinor, 0n);
-      return { min: f.minimum.amount.toString(), week: f.minimum.weekIndex + 1, neg: f.weeksBelowZero.length ? f.weeksBelowZero[0] + 1 : null, closing: f.weeks[19].closing.toString(), cost: (total(sample) - total(events)).toString(), below: f.weeks.filter((w) => w.belowReserve).length };
+      return { min: f.minimum.amount.toString(), week: f.minimum.weekIndex + 1, neg: f.weeksBelowZero.length ? f.weeksBelowZero[0] + 1 : null, closing: f.weeks[19].closing.toString(), cost: (total(sample) - total(events) + f.adjustmentCostMinor).toString(), below: f.weeks.filter((w) => w.belowReserve).length };
     };
     good.plans.forEach((p, i) => {
       const r = indep(p.levers);
@@ -276,6 +278,19 @@ async function main() {
     const allowedKeys = new Set(["id", "name", "type", "paidInvoices", "medianDaysLate", "bills", "paymentTermsDays"]);
     for (const c of cpTool.counterparties) for (const k of Object.keys(c)) assert.ok(allowedKeys.has(k), `counterparty field ${k} is allowed`);
     console.log("  isolation: no step or plan contains injected text, document text or any counterparty profile field; the injected order gives identical plans");
+
+    // Funding tool (Phase K): offered only when the owner saved offers, and it never shows the owner's label or the lender's name.
+    assert.equal(buildAgentTools(await buildContext(db, A.id, quoteId)).compare_financing_options, undefined, "no saved offers: the tool is not offered, so the request is unchanged");
+    const { saveFundingOffers } = await import("../src/actions/funding-store");
+    await saveFundingOffers(db, A.id, { offers: [{ id: "SecretLabelXY", lender: "Hidden Lender Ltd", product: "term_loan", principal: "20000.00", upfrontFees: "1000.00", disbursementDate: "2026-10-20", schedule: { kind: "equal", firstDate: "2026-10-27", count: 8, frequency: "weekly", amount: "2750.00" } }] });
+    const fctx = await buildContext(db, A.id, quoteId);
+    const fund = (await buildAgentTools(fctx).compare_financing_options.execute({} as never)) as { offers: { ref: string; totalCostMinor: string }[] };
+    assert.equal(fund.offers[0].ref, "offer1");
+    assert.equal(fund.offers[0].totalCostMinor, "300000", "the engine's figure: 3,000.00");
+    const fblob = JSON.stringify(fund);
+    assert.ok(!fblob.includes("SecretLabelXY") && !fblob.includes("Hidden Lender"), "neither the owner's label nor the lender name reaches the model");
+    assert.ok(fctx.seen.has("300000"), "the figure joins the numbers the prose may use");
+    console.log("  funding tool: absent without saved offers; with them it returns engine figures under anonymous refs (no label, no lender name)");
 
     console.log("agent sanity: ok");
   } finally {

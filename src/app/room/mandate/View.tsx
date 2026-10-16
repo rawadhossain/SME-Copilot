@@ -71,6 +71,7 @@ export default function MandatePage() {
           <ul className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm text-ink-soft">
             <li>Early-payment discount: at most {pct(L.maxEarlyPaymentDiscountBps)}.</li>
             <li>Invoice finance: advance up to {pct(L.maxFinanceAdvanceBps)}, fee up to {pct(L.maxFinanceFeeBps)} of the invoice.</li>
+            {(L.maxFundingCostBps !== undefined || L.maxFundingAmountMinor !== undefined) && <li>Funding offers you compare: {L.maxFundingCostBps !== undefined && <>estimated yearly cost up to {pct(L.maxFundingCostBps)}</>}{L.maxFundingCostBps !== undefined && L.maxFundingAmountMinor !== undefined && ", "}{L.maxFundingAmountMinor !== undefined && <>up to {money(L.maxFundingAmountMinor, cur)} from one lender</>}. Offers beyond this are flagged, never hidden.</li>}
             <li>New payees: {L.allowNewPayees ? "allowed" : "not allowed. Only payees you approved can be paid."}</li>
           </ul>
         </Card>

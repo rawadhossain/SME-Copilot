@@ -25,8 +25,10 @@
     "llm:record-scripted": "bun scripts/record-scripted.ts",
     "check:extract": "bun --env-file=.env scripts/extract-sanity.ts",
     "check:agent": "bun --env-file=.env scripts/agent-sanity.ts",
+    "check:financing": "bun scripts/financing-sanity.ts",
     "check:plan": "bun --env-file=.env scripts/plan-sanity.ts",
     "mandate:v2": "bun --env-file=.env scripts/mandate-v2.ts",
+    "mandate:funding": "bun --env-file=.env scripts/mandate-funding-limits.ts",
     "auth:seed": "bun --env-file=.env scripts/seed-accounts.ts",
     "e2e:smoke": "bun --env-file=.env scripts/e2e-smoke.ts",
     "demo": "bun --env-file=.env scripts/demo-server.ts"

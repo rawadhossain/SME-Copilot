@@ -11,6 +11,7 @@ const NAV = [
   { href: "/room", label: "Today" },
   { href: "/room/commitments", label: "Orders & quotes" },
   { href: "/room/case", label: "Decisions" },
+  { href: "/room/funding", label: "Funding" },
   { href: "/room/scoreboard", label: "Results" },
   { href: "/room/mandate", label: "Your limits" },
   { href: "/room/evidence", label: "Proof" },

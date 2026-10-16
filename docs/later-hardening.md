@@ -27,3 +27,4 @@
 - Canonical recordings depend on the seed date (asOf) and on the sample documents; if the seed date changes, re-record with `RECORD=1 bun run e2e:smoke` (about 4 to 10 live calls).
 - Evidence export is a case export plus the whole business log; a per-case slice of the chain cannot be verified on its own. The HTML self-check needs a browser with Ed25519 in Web Crypto (Node: scripts/verify-export.mjs).
 - bun audit: 1 high (braces, via eslint-config-next) and 1 moderate (esbuild, via drizzle-kit), both dev tooling only; update when upstream releases land.
+- Funding limits in the signed mandate (cost and amount) only shape the comparison today; no loan application exists to gate. When one is built, the gate must enforce them. The contract check compares terms the owner TYPES; reading a lender contract document through the quarantined reader (with a recording for the mock provider) is not built. Saved offers have no edit history beyond archived rows.

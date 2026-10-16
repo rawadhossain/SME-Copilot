@@ -41,6 +41,13 @@ export const mandateSchema = z.object({
     maxFinanceFeeBps: bps,
     /** Money movements above this amount need two confirmations. */
     requireSecondConfirmationAboveMinor: minor,
+    /**
+     * Funding offers (Phase K), optional so older signed mandates still verify. The ceiling on the estimated annualised cost of an offer
+     * (average-balance figure, basis points) and on the amount one offer advances. They shape the comparison the owner sees; nothing
+     * executes a loan, so no gate decision depends on them yet.
+     */
+    maxFundingCostBps: z.number().int().min(0).max(100000).optional(),
+    maxFundingAmountMinor: minor.optional(),
   }),
 });
 
