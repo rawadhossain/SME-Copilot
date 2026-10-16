@@ -5,13 +5,15 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { leverProblems } from "@/agent";
-import { agentRuns, planAuthorisations, plans } from "@/db/schema";
+import { agentRuns, businesses, planAuthorisations, plans } from "@/db/schema";
 import type { Constraint } from "@/domain/constraints";
 import { leverSchema, planId, type Lever } from "@/domain/plan";
 import { checkSignedMandate, evaluate, requestSchema, type GateResult } from "@/gate";
 import { signPlanAuthorisation } from "@/gate/owner-signing";
 import { toJsonValue } from "@/sandbox/proposals";
 import { buildContext } from "./agent-run";
+import { lettersSchema, type Letters } from "@/domain/letter-text";
+import { draftLetters, lettersHashOf, parseSignatureImage, termLinesFor } from "./plan-letters";
 import { appendRecord } from "./log";
 import { mandateHashOf, messageOf } from "./plan-authority";
 import { describeTerms } from "./plan-describe";
@@ -33,6 +35,9 @@ export const authoriseInputSchema = z.object({
   ttlHours: z.number().positive().max(24 * 14).optional(),
   /** 2 when the owner gives the second confirmation that large payments need (the plan schedules supplier payments). */
   confirmations: z.union([z.literal(1), z.literal(2)]).default(1),
+  /** Batch 14: the proposal letters the owner approved (one per counterparty in the terms) and the drawn signature (PNG data URL). Both are bound by the signature. */
+  letters: lettersSchema.optional(),
+  signatureImage: z.string().max(400_000).optional(),
 });
 export type AuthoriseInput = z.input<typeof authoriseInputSchema>;
 
@@ -56,7 +61,7 @@ async function evaluateTerms(q: Q, businessId: string, terms: PlanTerms) {
 
 /** Step 1: store a proposed authorisation after the gate checks every lever. A plan beyond the mandate is stored as denied. */
 export async function proposeAuthorisation(db: Db, businessId: string, input: unknown, opts: { preview?: boolean } = {}) {
-  const { runId, planId: planHash, tolerances, ttlHours, confirmations } = authoriseInputSchema.parse(input);
+  const { runId, planId: planHash, tolerances, ttlHours, confirmations, letters, signatureImage } = authoriseInputSchema.parse(input);
   const [run] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.businessId, businessId)));
   if (!run) throw new ActionError("not_found", "Unknown agent run for this business");
   const [plan] = await db.select().from(plans).where(and(eq(plans.businessId, businessId), eq(plans.runId, runId), eq(plans.planHash, planHash)));
@@ -89,6 +94,22 @@ export async function proposeAuthorisation(db: Db, businessId: string, input: un
     throw new ActionError("refused", e instanceof Error ? e.message : "The plan cannot be turned into requests");
   }
   problems.push(...leverProblems(ctx, levers));
+  // Letters and signature (Batch 14). Every counterparty in the terms needs a letter, and nobody else may get one.
+  let lettersJson: Letters | null = null;
+  let signatureHash: string | null = null;
+  if (!opts.preview) {
+    if (letters) {
+      const need = Object.keys(termLinesFor(terms, ctx.currency)).sort();
+      const have = Object.keys(letters).sort();
+      if (need.join() !== have.join()) throw new ActionError("refused", "There must be exactly one letter for each counterparty in the plan");
+      lettersJson = letters;
+    }
+    if (signatureImage) {
+      const sig = parseSignatureImage(signatureImage);
+      if (!sig.ok) throw new ActionError("refused", sig.reason);
+      signatureHash = sig.hash;
+    }
+  }
   const { gates, mandate } = await evaluateTerms(db, businessId, terms);
   const denied = problems.length > 0 || !mandateCheck.ok || gates.some((g) => g.decision === "deny");
 
@@ -113,6 +134,8 @@ export async function proposeAuthorisation(db: Db, businessId: string, input: un
       id: authId, businessId, runId, planId: plan.planHash, leversHash: leversHashOf(levers), terms: toJsonValue(terms) as Record<string, unknown>, termsHash: termsHashOf(terms),
       mandateVersion: mandateCheck.ok ? mandateCheck.mandate.version : 0, mandateHash: mandate ? mandateHashOf(mandate.canonical) : "",
       status: denied ? "denied" : "proposed",
+      letters: lettersJson ? (toJsonValue(lettersJson) as Record<string, unknown>) : null, lettersHash: lettersJson ? lettersHashOf(lettersJson) : null,
+      signatureImage: signatureHash ? signatureImage! : null, signatureHash,
       gateResult: toJsonValue({ problems, requests: gates, mandateProblem: mandateCheck.ok ? null : mandateCheck.reason }) as Record<string, unknown>,
       expiresAt: new Date(new Date(`${asOf}T00:00:00Z`).getTime() + ttl * 3_600_000),
     })
@@ -174,7 +197,18 @@ export async function authorisePlan(db: Db, businessId: string, input: unknown, 
 }
 
 /** Preview of what a signature would cover. Writes nothing. */
-export async function previewAuthorisation(db: Db, businessId: string, input: unknown) {
+export async function previewAuthorisation(db: Db, businessId: string, input: unknown, owner: { name: string } = { name: "The owner" }) {
   const r = await proposeAuthorisation(db, businessId, input, { preview: true });
-  return (r as unknown as { preview: Record<string, unknown> }).preview;
+  const preview = (r as unknown as { preview: Record<string, unknown> & { runId: string; planId: string; expiresAt: string } }).preview;
+  // The first draft of each letter, written by code from the terms, and the locked terms block that goes under it (Batch 14).
+  const { runId, planId: planHash } = authoriseInputSchema.pick({ runId: true, planId: true }).parse(input);
+  const [plan] = await db.select().from(plans).where(and(eq(plans.businessId, businessId), eq(plans.runId, runId), eq(plans.planHash, planHash)));
+  const ctx = await buildContext(db, businessId, null);
+  const levers = z.array(leverSchema).parse((plan?.plan as { levers?: unknown } | undefined)?.levers ?? []);
+  const feeCap = (() => { const m = checkSignedMandate(ctx.mandate); return m.ok ? m.mandate.limits.maxFinanceFeeBps : 0; })();
+  const tol = tolerancesSchema.parse(((input ?? {}) as { tolerances?: unknown }).tolerances ?? {});
+  const terms = buildTerms(levers, ctx.pending.map((p) => p.event), tol, feeCap, (plan?.plan as { financeFeeBps?: number } | undefined)?.financeFeeBps, preview.confirmations as 1 | 2);
+  const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId));
+  const letters = draftLetters({ terms, counterparties: ctx.counterparties, business: biz?.name ?? "", owner: owner.name, expiresAt: String(preview.expiresAt), currency: ctx.currency });
+  return { ...preview, letters, termLines: termLinesFor(terms, ctx.currency), counterparties: ctx.counterparties.filter((c) => c.id in letters).map((c) => ({ id: c.id, name: c.name, role: c.role })), business: biz?.name ?? "", owner: owner.name };
 }

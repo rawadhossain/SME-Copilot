@@ -46,6 +46,7 @@ export async function buildCaseExport(db: Db, businessId: string, rootRunId: str
       return {
         id: a.id, businessId: a.businessId, runId: a.runId, planId: a.planId, leversHash: a.leversHash, termsHash: a.termsHash, terms: a.terms, mandateVersion: a.mandateVersion, mandateHash: a.mandateHash,
         expiresAt: a.expiresAt.toISOString(), status: a.status, signature: a.signature, approvedBy: a.approvedBy, signedAt: a.signedAt, gateResult: a.gateResult,
+        letters: a.letters ?? null, lettersHash: a.lettersHash ?? null, signatureImage: a.signatureImage ?? null, signatureHash: a.signatureHash ?? null,
         execution: ex ? { status: ex.status, outcome: ex.outcome, verification: ex.verification, startedAt: ex.startedAt, finishedAt: ex.finishedAt } : null,
         actions: acts.filter((x) => x.authorisationId === a.id).map((x) => ({ id: x.id, kind: x.kind, status: x.status, payload: x.payload, payloadHash: x.payloadHash, gateResult: x.gateResult, result: x.result, idempotencyKey: x.idempotencyKey })),
       };

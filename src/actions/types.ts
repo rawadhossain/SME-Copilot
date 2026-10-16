@@ -26,6 +26,8 @@ export const ACTION_EVENTS = {
   AGENT_RUN_STARTED: "agent.run_started",
   AGENT_PLANS_SUBMITTED: "agent.plans_submitted",
   AGENT_RUN_FAILED: "agent.run_failed",
+  PLAN_EDITED: "plan.edited",
+  PLAN_EDIT_ASSISTED: "plan.edit_assisted",
   PLAN_AUTHORISATION_PROPOSED: "plan.authorisation_proposed",
   PLAN_AUTHORISATION_DENIED: "plan.authorisation_denied",
   PLAN_AUTHORISED: "plan.authorised",

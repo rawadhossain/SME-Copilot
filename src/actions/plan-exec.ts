@@ -5,8 +5,9 @@
 // by compensation, so the sandbox is never left half-applied. It never signs anything and never reads the owner key.
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { agentRuns, planAuthorisations, planExecutions, sandboxApplications } from "@/db/schema";
+import { agentRuns, planAuthorisations, planExecutions, sandboxApplications, sandboxThreads } from "@/db/schema";
 import { financedInvoiceMinor } from "@/engine/plans";
+import { canonicalize } from "@/gate/canonical";
 import { buildContext } from "./agent-run";
 import type { Constraint } from "@/domain/constraints";
 import type { GateRequestJson } from "@/gate/request";
@@ -16,6 +17,7 @@ import { actionProposals } from "@/db/schema";
 import { executeAction } from "./execute";
 import { appendRecord } from "./log";
 import { authorisationCovers, checkAuthorisationCurrent } from "./plan-authority";
+import type { PlanTerms } from "./plan-terms";
 import { expectedScheduleFor, itemToRequest, payeeFor } from "./plan-schedule";
 import { classifyOffer, classifyProposalReply, constraintFrom, type BranchVerdict, type TermsEntry } from "./plan-terms";
 import { verifyPlanExecution, type PlanVerification } from "./plan-verify";
@@ -38,10 +40,16 @@ export interface Branch {
   agreedTerms?: Record<string, number>;
   offer?: { advanceBps: number; feeBps: number };
   withdrawn?: boolean;
+  /** Batch 13: set on the OLD attempt's branch when a later round of the same deal took the agreement over (it is not withdrawn). */
+  adopted?: string;
+  /** Batch 13: set on a branch that was taken over from an earlier round instead of being asked again (that round's authorisation id). */
+  carriedFrom?: string;
 }
 
 export interface ExecutionOutcome {
   branches: Branch[];
+  /** Batch 13: true while agreements reached before a counterparty pushed back are kept on hold (not withdrawn). */
+  held?: boolean;
   /** True once every branch is committed (the finance advance taken up, every agreement in place). */
   committed: boolean;
   /** Payments and receipts scheduled in the sandbox after the commit (ADR-019). */
@@ -72,6 +80,80 @@ class StepError extends Error {
 }
 
 const response = (result: unknown) => (result ?? {}) as { outcome?: string; terms?: Record<string, unknown> | null; threadId?: string; applicationId?: string; paymentId?: string; receiptId?: string };
+
+/** The structured terms a proposal lever asks for, as numbers (to compare with what a counterparty agreed). */
+function proposalTerms(e: TermsEntry): Record<string, number> {
+  const r = requestSchema.parse(e.request);
+  if (r.kind !== "sandbox.send_proposal") return {};
+  const { kind: _kind, ...rest } = r.proposal as Record<string, unknown>;
+  void _kind;
+  return Object.fromEntries(Object.entries(rest).filter(([, v]) => typeof v === "number")) as Record<string, number>;
+}
+
+interface Carry { authId: string; execId: string; outcome: ExecutionOutcome; branch: Branch; lever: TermsEntry["lever"]; taken: boolean; released: boolean }
+
+/** Held (still live, not yet taken over) branches of the run this one revises. Only the immediate parent round matters. */
+async function loadCarry(db: Db, row: typeof planAuthorisations.$inferSelect, runRow: typeof agentRuns.$inferSelect | undefined): Promise<Carry[]> {
+  if (!runRow?.parentRunId) return [];
+  const auths = await db.select().from(planAuthorisations).where(and(eq(planAuthorisations.businessId, row.businessId), eq(planAuthorisations.runId, runRow.parentRunId)));
+  const out: Carry[] = [];
+  for (const a of auths) {
+    const [ex] = await db.select().from(planExecutions).where(eq(planExecutions.authorisationId, a.id));
+    if (!ex || ex.status !== "needs_replan") continue;
+    const outcome = ex.outcome as ExecutionOutcome;
+    if (!outcome.held) continue;
+    const entries = (a.terms as PlanTerms).entries;
+    for (const b of outcome.branches ?? []) {
+      if ((b.status !== "agreed" && b.status !== "offered") || b.withdrawn || b.adopted) continue;
+      const lever = entries.find((x) => x.index === b.index)?.lever;
+      if (lever) out.push({ authId: a.id, execId: ex.id, outcome, branch: b, lever, taken: false, released: false });
+    }
+  }
+  return out;
+}
+
+/**
+ * Withdraws what an attempt kept on hold after a counterparty pushed back (Batch 13): agreed threads and finance offers that no later round took over.
+ * `keepLevers` lists levers (by index in this authorisation's terms) that must stay. Each withdrawal goes through the same pipeline and gate as any other
+ * compensation and is covered by the authorisation that created it. Safe to call again.
+ */
+export async function releaseHeld(db: Db, authorisationIdInput: string, o: { keepIndexes?: number[] } = {}): Promise<{ released: number; ok: boolean }> {
+  const authorisationId = z.string().uuid().parse(authorisationIdInput);
+  const [a] = await db.select().from(planAuthorisations).where(eq(planAuthorisations.id, authorisationId));
+  if (!a) throw new ActionError("not_found", "Unknown plan authorisation");
+  const [ex] = await db.select().from(planExecutions).where(eq(planExecutions.authorisationId, authorisationId));
+  if (!ex || ex.status !== "needs_replan") return { released: 0, ok: true };
+  const outcome = ex.outcome as ExecutionOutcome;
+  let released = 0;
+  let ok = true;
+  const results: { target: "thread" | "application"; id: string; ok: boolean }[] = [];
+  for (const b of [...(outcome.branches ?? [])].reverse()) {
+    if ((b.status !== "agreed" && b.status !== "offered") || b.withdrawn || b.adopted || o.keepIndexes?.includes(b.index)) continue;
+    const target = b.applicationId && b.status === "offered" ? ({ target: "application", id: b.applicationId } as const) : b.threadId ? ({ target: "thread", id: b.threadId } as const) : null;
+    if (!target) continue;
+    try {
+      const proposed = await proposeAction(db, a.businessId, { kind: "sandbox.withdraw", target: target.target, id: target.id }, `plan:${authorisationId}:release:${target.target}:${target.id}`, "agent", { authorisationId });
+      if (proposed.gate.decision === "deny") throw new Error(proposed.gate.reasons.join("; "));
+      const p = proposed.proposal;
+      if (p.status !== "executed" && p.status !== "verified") {
+        if (p.status !== "approved") throw new Error(`the withdrawal is ${p.status}`);
+        await executeAction(db, p.id);
+      }
+      b.withdrawn = true;
+      released++;
+      results.push({ ...target, ok: true });
+    } catch {
+      ok = false;
+      results.push({ ...target, ok: false });
+    }
+  }
+  outcome.held = outcome.branches.some((b) => (b.status === "agreed" || b.status === "offered") && !b.withdrawn && !b.adopted);
+  if (results.length > 0) {
+    await db.update(planExecutions).set({ outcome: toJsonValue(outcome) as Record<string, unknown> }).where(eq(planExecutions.id, ex.id));
+    await appendRecord(db, { businessId: a.businessId, event: ACTION_EVENTS.PLAN_COMPENSATED, actor: "executor", detail: { authorisationId, why: "held agreements released", released: results, allOk: ok } });
+  }
+  return { released, ok };
+}
 
 export async function executePlan(db: Db, authorisationIdInput: string, opts: ExecuteOptions = {}): Promise<ExecutionResult> {
   const authorisationId = z.string().uuid().parse(authorisationIdInput);
@@ -160,7 +242,7 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
   };
 
   // Withdraw everything this execution made live, newest first. A failed withdrawal is recorded and fails the execution loudly.
-  const compensate = async (why: string): Promise<boolean> => {
+  const compensate = async (why: string, o: { keepHeld?: boolean } = {}): Promise<boolean> => {
     let allOk = true;
     for (const sc of [...outcome.scheduled].reverse()) {
       if (sc.withdrawn) continue;
@@ -174,6 +256,8 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
       }
     }
     for (const b of [...outcome.branches].reverse()) {
+      // Batch 13: when a counterparty pushed back, the agreements already reached stay on hold so the owner can keep them.
+      if (o.keepHeld && (b.status === "agreed" || b.status === "offered") && !b.withdrawn) continue;
       const live: { target: "thread" | "application"; id: string }[] = [];
       if (b.applicationId && !b.withdrawn && (b.status === "offered" || b.status === "committed")) live.push({ target: "application", id: b.applicationId });
       if (b.threadId && !b.withdrawn && (b.status === "agreed" || b.status === "committed")) live.push({ target: "thread", id: b.threadId });
@@ -198,6 +282,37 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
   };
 
   try {
+    // 3a. Batch 13: agreements an earlier round of this deal kept on hold are taken over, not asked again, when the owner left the term unchanged.
+    const carry = await loadCarry(db, row, runRow);
+    const adopt = async (e: TermsEntry, b: Branch, request: GateRequestJson): Promise<boolean> => {
+      const cand = carry.find((c) => !c.taken && canonicalize(c.lever) === canonicalize(e.lever));
+      if (!cand) return false;
+      const cb = cand.branch;
+      if (e.lever.kind === "finance_invoice") {
+        if (!cb.applicationId || request.kind !== "sandbox.submit_application") return false;
+        const [a] = await db.select().from(sandboxApplications).where(and(eq(sandboxApplications.id, cb.applicationId), eq(sandboxApplications.businessId, businessId)));
+        if (!a || a.status !== "offered" || !cb.offer || a.requestedAmountMinor.toString() !== request.invoiceAmountMinor) return false;
+        if (classifyOffer(e, { status: a.status, advanceBps: cb.offer.advanceBps, feeBps: cb.offer.feeBps }).verdict !== "offer_in_terms") return false;
+        b.applicationId = cb.applicationId; b.offer = cb.offer; b.status = "offered";
+      } else {
+        if (!cb.threadId || !cb.agreedTerms) return false;
+        const [t] = await db.select().from(sandboxThreads).where(and(eq(sandboxThreads.id, cb.threadId), eq(sandboxThreads.businessId, businessId)));
+        if (!t || t.status !== "agreed") return false;
+        const same = canonicalize(cb.agreedTerms) === canonicalize(Object.fromEntries(Object.entries(proposalTerms(e)).map(([k, v]) => [k, Number(v)])));
+        const v = classifyProposalReply(e, { outcome: same ? "accept" : "counter", terms: cb.agreedTerms });
+        if (v.verdict !== "agreed" && v.verdict !== "counter_in_terms") return false;
+        b.threadId = cb.threadId; b.agreedTerms = cb.agreedTerms; b.status = "agreed";
+      }
+      b.proposalIds = [...cb.proposalIds];
+      b.carriedFrom = cand.authId;
+      cand.taken = true;
+      cb.adopted = authorisationId;
+      await db.update(planExecutions).set({ outcome: toJsonValue(cand.outcome) as Record<string, unknown> }).where(eq(planExecutions.id, cand.execId));
+      await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_BRANCH_RESULT, actor: "executor", detail: { authorisationId, index: e.index, kind: e.lever.kind, counterpartyId: b.counterpartyId, status: b.status, reason: null, agreedTerms: b.agreedTerms ?? null, offer: b.offer ?? null, threadId: b.threadId ?? null, applicationId: b.applicationId ?? null, carriedFrom: cand.authId } });
+      await save();
+      return true;
+    };
+
     // 3. Negotiate: one structured proposal per counterparty. Replies are classified from structured fields only.
     for (const e of terms.entries) {
       const b = branchFor(e);
@@ -216,6 +331,7 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
           if (inv) request = { ...request, invoiceAmountMinor: inv.amountMinor.toString() };
         }
       }
+      if (await adopt(e, b, request)) continue;
       const sent = await act(`send:${e.index}`, request, `${key}:send`);
       b.proposalIds.push(sent.proposalId);
       let verdict: BranchVerdict;
@@ -258,11 +374,18 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
       await save();
     }
 
+    // Held agreements of the earlier round that this round did not take over (the term changed or was dropped) are withdrawn now.
+    for (const c of carry.filter((x) => !x.taken && !x.released)) {
+      c.released = true;
+      await releaseHeld(db, c.authId);
+    }
+
     // 4. Any branch without agreement: the plan cannot be carried out as authorised. Withdraw what is live and stop (8b re-plans).
     const stuck = outcome.branches.filter((b) => b.status === "needs_replan");
     if (stuck.length > 0) {
-      const clean = await compensate("needs_replan");
-      await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_NEEDS_REPLAN, actor: "executor", detail: { authorisationId, branches: outcome.branches.map((b) => ({ index: b.index, kind: b.kind, status: b.status, reason: b.reason ?? null })), cleanState: clean, constraints: outcome.constraints } });
+      const clean = await compensate("needs_replan", { keepHeld: true });
+      outcome.held = outcome.branches.some((b) => (b.status === "agreed" || b.status === "offered") && !b.withdrawn);
+      await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_NEEDS_REPLAN, actor: "executor", detail: { authorisationId, branches: outcome.branches.map((b) => ({ index: b.index, kind: b.kind, status: b.status, reason: b.reason ?? null, held: (b.status === "agreed" || b.status === "offered") && !b.withdrawn })), cleanState: clean, held: outcome.held, constraints: outcome.constraints } });
       await setLifecycle("needs_replan");
       if (!clean) {
         outcome.failure = { step: "compensate", reason: "a withdrawal failed after a branch needed a re-plan" };

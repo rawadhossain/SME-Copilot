@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Chart, type Series } from "@/ui/Chart";
 import { ExecutionPanel, ExhaustedCard, ReplanPanel, PlanTable, RunChips, Stepper, Timeline, VerificationPanel } from "@/ui/case/parts";
+import { EditPlanDialog } from "@/ui/case/EditPlanDialog";
 import { SignDialog } from "@/ui/case/SignDialog";
 import { Btn, Card, Chip, Empty, ErrorNote, Loading } from "@/ui/kit";
 import { date, money, week } from "@/ui/format";
@@ -26,6 +27,8 @@ function Case() {
   const [selected, setSelected] = useState<string | null>(null);
   const [lines, setLines] = useState<any>(null);
   const [signPlan, setSignPlan] = useState<string | null>(null);
+  const [editPlanId, setEditPlanId] = useState<string | null>(null);
+  const [revising, setRevising] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exhausted, setExhausted] = useState<any>(null);
@@ -163,7 +166,7 @@ function Case() {
       ) : (
         <>
           <Card title="Your options, compared with doing nothing" subtitle="Every number is calculated by fixed code, not written by the AI.">
-            <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} onSign={(id) => setSignPlan(id)} canSign={run.id === lastRun.id && !runAuths.some((a) => ["authorised", "used"].includes(a.authorisation.status)) && !isExhausted} />
+            <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} onSign={(id) => setSignPlan(id)} onEdit={(id) => setEditPlanId(id)} canSign={run.id === lastRun.id && !runAuths.some((a) => ["authorised", "used"].includes(a.authorisation.status)) && !isExhausted} />
           </Card>
           <Card title="What each choice does to your cash" subtitle="The grey dashed line is doing nothing.">
             {lines ? <Chart series={series} reserveMinor={lines.reserveMinor} currency={cur} /> : <Loading />}
@@ -178,7 +181,7 @@ function Case() {
       ))}
 
       {run.lifecycle === "needs_replan" && latestAuth?.execution?.status === "needs_replan" && (
-        <ReplanPanel run={run} constraints={latestAuth.execution.outcome.constraints ?? []} names={names} busy={busy === "replan"} onReplan={() => act("replan", `/api/plan-authorisations/${latestAuth.authorisation.id}/replan`, (r) => r.data?.status === "exhausted" && setExhausted(r.data))} />
+        <ReplanPanel run={run} constraints={latestAuth.execution.outcome.constraints ?? []} names={names} busy={busy === "replan"} onRevise={() => setRevising(true)} onRelease={() => act("release", `/api/plan-authorisations/${latestAuth.authorisation.id}/release`)} onReplan={() => act("replan", `/api/plan-authorisations/${latestAuth.authorisation.id}/replan`, (r) => r.data?.status === "exhausted" && setExhausted(r.data))} />
       )}
       {isExhausted && <ExhaustedCard run={run} last={exhausted?.bestOption?.plan ?? lastAttempted} cur={cur} />}
 
@@ -189,6 +192,14 @@ function Case() {
         </Card>
       ))}
 
+      {editPlanId && <EditPlanDialog open onClose={() => setEditPlanId(null)} runId={run.id} plan={run.plans.find((x: any) => x.id === editPlanId)} names={names} counterparties={data?.counterparties ?? []} cur={cur} onSaved={(id) => { setSelected(id); void loadCase(); }} />}
+      {revising && latestAuth && (
+        <EditPlanDialog open onClose={() => setRevising(false)} runId={run.id} plan={run.plans.find((x: any) => x.id === latestAuth.authorisation.planId) ?? run.plans[0]} names={names} counterparties={data?.counterparties ?? []} cur={cur}
+          constraints={latestAuth.execution?.outcome?.constraints ?? []} title="Revise the terms" saveLabel="Open a new round with these terms"
+          intro="Their answers are filled in. Change only what you want to change: the terms for the one who pushed back, for all of them, or untick a term to drop it. Nothing is sent until you sign the new round; every number is recomputed by the engine."
+          submit={({ levers, notes, commit }) => call(`/api/plan-authorisations/${latestAuth.authorisation.id}/revise`, { levers, notes, commit })}
+          onSaved={() => { setRevising(false); void loadCases(); void loadCase(); }} />
+      )}
       {signPlan && <SignDialog open onClose={() => setSignPlan(null)} runId={run.id} planId={signPlan} onSigned={() => { setSignPlan(null); void loadCases(); void loadCase(); }} />}
       {!signed && hasPlans && !isExhausted && <p className="text-center text-sm text-ink-soft">Nothing has been sent to anyone. <Chip tone="neutral">waiting for your signature</Chip></p>}
     </div>

@@ -30,6 +30,8 @@ export const constraintSchema = z.object({
 export type Constraint = z.output<typeof constraintSchema>;
 
 export const MAX_REPLAN_ROUNDS = 2;
+/** Owner-driven revisions (Batch 13) are not limited by the agent's two rounds, but are capped so a negotiation cannot loop forever. */
+export const MAX_OWNER_REVISIONS = 6;
 
 /** Merges constraints: per (kind, counterparty) the tightest value of each field wins. */
 export function mergeConstraints(...lists: Constraint[][]): Constraint[] {

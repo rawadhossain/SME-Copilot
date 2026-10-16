@@ -7,6 +7,7 @@ export { AGENT_PURPOSE, SYSTEM_PROMPT, buildMessages } from "./prompt";
 export { deterministicPlans } from "./fallback";
 export { guardRanking } from "./guard";
 export { buildPlanView, doNothingSummary, leverBounds, leverProblems, dryRun, describeLever } from "./plan-builder";
+export { ASSIST_PURPOSE, assistOutputSchema, buildAssistMessages, applyEdits, ruleEdits, type AssistChange, type AssistCounterparty } from "./edit-assist";
 export { checkProse, collectNumbers, claimsIn } from "./prose";
 import "./scripted";
 export { BAD_AGENT_PURPOSE, WEAK_AGENT_PURPOSE } from "./scripted";

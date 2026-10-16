@@ -97,7 +97,7 @@ function stepLabel(kind: string, p: Record<string, unknown>): { label: string; t
   const t = String(p.type);
   const note: Record<string, [string, "neutral" | "good" | "caution" | "danger"]> = {
     context: ["Read the confirmed commitments and your limits", "neutral"], loop_finished: ["Planner finished", "good"], fallback: ["The deterministic planner was used", "caution"],
-    ai_unavailable: ["The AI planner was unavailable; fallback used", "caution"], do_nothing: ["Computed the do-nothing baseline", "neutral"], shortage_trigger: ["Shortage trigger", "neutral"],
+    ai_unavailable: ["The AI planner was unavailable; fallback used", "caution"], do_nothing: ["Computed the do-nothing baseline", "neutral"], shortage_trigger: ["Shortage trigger", "neutral"], owner_revision: ["You revised the terms after a counterparty pushed back", "good"],
     refused: ["The run was refused", "danger"], failed: ["The run failed", "danger"],
   };
   const [label, tone] = note[t] ?? [t, "neutral"];

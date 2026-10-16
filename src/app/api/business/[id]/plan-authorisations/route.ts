@@ -20,6 +20,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/business/[id]/p
   if (!body.ok) return body.res;
   const parsed = z.object({ password: z.string().max(200), secondApprover: z.object({ email: z.string(), password: z.string() }).optional() }).passthrough().safeParse(body.data);
   if (!parsed.success) return NextResponse.json({ error: "Your password is required to sign." }, { status: 400 });
+  // Batch 14: signing needs the proposal letters you approved and a drawn signature, as well as your password.
+  const extra = body.data as { letters?: unknown; signatureImage?: unknown };
+  if (typeof extra.signatureImage !== "string" || extra.signatureImage.length === 0) return NextResponse.json({ error: "Please draw your signature to sign." }, { status: 400 });
+  if (!extra.letters || typeof extra.letters !== "object") return NextResponse.json({ error: "The proposal letters are missing; open the signing step again." }, { status: 400 });
   const [biz] = await db.select({ id: businesses.id }).from(businesses).where(eq(businesses.id, id));
   if (!biz) return NextResponse.json({ error: "Business not found" }, { status: 404 });
   const { password, secondApprover, ...input } = parsed.data;

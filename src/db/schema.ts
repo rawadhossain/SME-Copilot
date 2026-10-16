@@ -535,6 +535,12 @@ export const planAuthorisations = pgTable(
     createdAt: createdAt(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     signedAt: timestamp("signed_at", { withTimezone: true }),
+    // Batch 14: the proposal letters the owner approved (per counterparty, plain text) and the drawn signature. Both are set when the
+    // authorisation is created; their SHA-256 hashes are part of the owner-signed message, so neither can change afterwards.
+    letters: jsonb("letters"),
+    lettersHash: text("letters_hash"),
+    signatureImage: text("signature_image"),
+    signatureHash: text("signature_hash"),
   },
   (t) => [index("plan_authorisations_business_idx").on(t.businessId, t.createdAt)],
 );
