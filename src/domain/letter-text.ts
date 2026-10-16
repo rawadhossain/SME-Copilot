@@ -42,3 +42,14 @@ export function figureMismatches(letter: { subject: string; paragraphs: string[]
   const found = [letter.subject, ...letter.paragraphs].flatMap((t) => t.match(FIGURE) ?? []);
   return [...new Set(found.filter((f) => !allowed.has(norm(f))))];
 }
+
+// ---- Stricter check for a REWRITE by the assistant: it may not introduce any figure or date that is not already in the letter or the terms.
+const DATE = /\b\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}\b/gi;
+const YEAR = /\b(?:19|20)\d{2}\b/g;
+const figuresIn = (texts: string[]): string[] => texts.flatMap((t) => [...(t.match(FIGURE) ?? []), ...(t.match(DATE) ?? []), ...(t.match(YEAR) ?? [])]);
+
+/** Figures (percentages, day counts, amounts, dates, years) in the rewrite that appear neither in the original letter nor in its terms. */
+export function newFigures(original: { subject: string; paragraphs: string[] }, rewritten: { subject: string; paragraphs: string[] }, termLines: string[]): string[] {
+  const allowed = new Set(figuresIn([original.subject, ...original.paragraphs, ...termLines]).map(norm));
+  return [...new Set(figuresIn([rewritten.subject, ...rewritten.paragraphs]).filter((f) => !allowed.has(norm(f))))];
+}

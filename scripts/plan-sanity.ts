@@ -444,6 +444,12 @@ async function main() {
     assert.ok(done.ok && done.committed && done.plan.source === "owner" && done.plan.editedFrom === planE.id && done.plan.ownerNotes?.[E.supplierId] === "Please confirm by Friday", "owner plan keeps the owner note");
     const authE = await authorisePlan(db, E.biz.id, { runId: E.runId, confirmations: 2, planId: planId(edited) }, "Test Owner");
     assert.equal(authE.status, "authorised", "an edited plan can be signed like any other");
+    {
+      // An owner note written while adjusting the terms now goes into that counterparty's letter (Batch 14).
+      const { previewAuthorisation } = await import("../src/actions/plan-authorise");
+      const pv = (await previewAuthorisation(db, E.biz.id, { runId: E.runId, planId: planId(edited), confirmations: 2 }, { name: "Alex Mercer" })) as unknown as { letters: Record<string, { paragraphs: string[] }> };
+      assert.ok(pv.letters[E.supplierId].paragraphs.some((x) => x === "Please confirm by Friday"), "the owner's note is a paragraph of the supplier letter");
+    }
     const bad = await editPlan(db, E.biz.id, { runId: E.runId, basePlanId: planE.id, levers: lever3(E).map((l) => (l.kind === "supplier_reduce_deposit" ? { ...l, percentBps: 9900 } : l)), commit: true });
     assert.ok(!bad.ok && bad.reasons.length > 0, "an edit outside the bounds is refused with reasons");
     assert.equal((await rows<{ n: number }>`SELECT count(*)::int n FROM plans WHERE run_id = ${E.runId}`)[0].n, plansBefore + 1, "only the valid edit was stored");
@@ -589,6 +595,17 @@ async function main() {
       await assert.rejects(() => executePlan(db, authX.authorisationId), /letters were edited after they were signed/);
       assert.equal((await sandboxCounts(X.biz.id)).threads, 0, "nothing was sent");
       console.log("  13 letters and signature: drafted per counterparty, edited line and locked terms reached the supplier and lender, blank drawing and missing letter refused, letters edited after signing refused before sending");
+    }
+
+    // ================= 14. Plans that cannot run rank last (Batch 14) =================
+    {
+      const { demoteBlocked } = await import("../src/agent");
+      const mk = (id: string, blockers?: string[]) => ({ id, title: "Recommended: x", levers: [], contingencies: [], rationale: "", source: "ai", metrics: planA.metrics, checks: [], assumptions: [], proseFlagged: false, removedSentences: [], ...(blockers ? { blockers } : {}) }) as unknown as Parameters<typeof demoteBlocked>[0][number];
+      const ranked = demoteBlocked([mk("blocked", ["limit"]), mk("ok1"), mk("ok2")]);
+      assert.deepEqual(ranked.map((p) => p.id), ["ok1", "ok2", "blocked"], "a plan that cannot run goes after the ones that can");
+      assert.ok((ranked[2].warnings ?? []).length > 0 && !/^recommended/i.test(ranked[2].title), "and it is flagged and no longer called the recommendation");
+      assert.deepEqual(demoteBlocked([mk("a", ["limit"]), mk("b", ["limit"])]).map((p) => p.id), ["a", "b"], "if every plan is blocked the order is unchanged");
+      console.log("  14 blocked plans: demoted behind plans that can run, flagged, no longer recommended");
     }
 
     // ================= 8. Layering =====

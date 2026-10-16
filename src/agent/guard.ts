@@ -25,3 +25,13 @@ export function guardRanking(ctx: AgentToolContext, plans: PlanView[]): { plans:
     notes: [{ type: "guard", result: injected ? "no AI plan stays at or above zero; the best deterministic plan was put first" : "AI plans below zero were ranked after plans at or above zero", demotedPlanIds: bad.map((p) => p.id), injectedPlanId: injected ? feasible[0].id : null }],
   };
 }
+
+const BLOCKED_WARNING = "A payment these terms imply would break one of your signed limits, so this plan would be stopped when it runs. It cannot be signed as it stands; adjust its terms.";
+
+/** Plans that cannot run (an implied payment breaks a signed limit, see impliedPaymentBlockers) go after plans that can, whoever proposed them. Stable; pure. */
+export function demoteBlocked(plans: PlanView[]): PlanView[] {
+  const blocked = (p: PlanView) => (p.blockers?.length ?? 0) > 0;
+  if (!plans.some(blocked) || plans.every(blocked)) return plans;
+  const marked = plans.map((p) => (blocked(p) ? { ...p, title: p.title.replace(/^recommended:\s*/i, ""), warnings: [...new Set([...(p.warnings ?? []), BLOCKED_WARNING])] } : p));
+  return [...marked.filter((p) => !blocked(p)), ...marked.filter(blocked)];
+}

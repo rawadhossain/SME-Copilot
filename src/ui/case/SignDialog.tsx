@@ -22,6 +22,10 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
   const [letters, setLetters] = useState<Record<string, { subject: string; paragraphs: string[] }>>({});
   const [tab, setTab] = useState<string | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
+  const [rewriteText, setRewriteText] = useState("");
+  const [rewriteBusy, setRewriteBusy] = useState(false);
+  const [rewriteNote, setRewriteNote] = useState<any>(null);
+  const [undo, setUndo] = useState<Record<string, { subject: string; paragraphs: string[] }>>({});
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("finance@mercer-vale.example");
   const [password2, setPassword2] = useState("");
@@ -29,7 +33,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
 
   useEffect(() => {
     if (!open || !planId) return;
-    setPrev(null); setError(null); setPassword(""); setPassword2(""); setStep(0); setSignature(null); setLetters({}); setTab(null);
+    setPrev(null); setError(null); setPassword(""); setPassword2(""); setStep(0); setSignature(null); setLetters({}); setTab(null); setRewriteText(""); setRewriteNote(null); setUndo({});
     void call(`/api/business/${biz}/plan-authorisations/preview`, { runId, planId }).then((r) => {
       if (!r.ok) { setError(r.data.error ?? "Could not prepare the signing summary"); return; }
       setPrev(r.data);
@@ -42,6 +46,18 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
   const nameOf = (id: string) => (cps.find((c) => c.id === id)?.name ?? "a counterparty").replace(" (SYNTHETIC)", "");
   const dateText = useMemo(() => new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }), []);
   const lettersOk = cps.length > 0 && cps.every((c) => letters[c.id]?.subject.trim() && letters[c.id]?.paragraphs.some((p) => p.trim()));
+
+  /** Asks the assistant to reword the letter shown. The result only replaces the text in the editor (undo keeps the previous version); nothing is saved. */
+  async function rewriteLetter() {
+    if (!tab || !letters[tab] || !planId) return;
+    setRewriteBusy(true); setError(null); setRewriteNote(null);
+    const r = await call(`/api/business/${biz}/plan-letter-assist`, { runId, planId, counterpartyId: tab, instruction: rewriteText, letter: letters[tab] });
+    setRewriteBusy(false);
+    if (!r.ok) { setError(r.data.error ?? "The assistant did not answer"); return; }
+    if (!r.data.ok) { setError(r.data.error); setRewriteNote({ remaining: r.data.remaining }); return; }
+    setRewriteNote(r.data);
+    if (r.data.changed) { setUndo((u) => ({ ...u, [tab]: letters[tab] })); setLetters((p) => ({ ...p, [tab]: r.data.letter })); }
+  }
 
   async function sign() {
     setBusy(true); setError(null);
@@ -98,6 +114,22 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
                   letter={letters[tab]} onChange={(l) => setLetters((p) => ({ ...p, [tab]: l }))} onReset={() => setLetters((p) => ({ ...p, [tab]: JSON.parse(JSON.stringify(prev.letters[tab])) }))}
                   to={nameOf(tab)} from={prev.owner} business={String(prev.business).replace(" (SYNTHETIC)", "")} dateText={dateText} termLines={prev.termLines?.[tab] ?? []}
                 />
+              )}
+              {tab && letters[tab] && (
+                <section className="rounded-lg border border-line bg-white/70 p-3">
+                  <Field label="Or ask the assistant to rewrite this letter (optional)">
+                    <div className="flex gap-2">
+                      <input className={inputClass} maxLength={300} placeholder="for example: make it firmer, or shorter, or more formal" value={rewriteText} onChange={(e) => setRewriteText(e.target.value)} />
+                      <Btn variant="secondary" busy={rewriteBusy} disabled={!rewriteText.trim() || rewriteNote?.remaining === 0} onClick={() => void rewriteLetter()}>Rewrite</Btn>
+                    </div>
+                  </Field>
+                  <div className="mt-2 space-y-1 text-xs" aria-live="polite">
+                    {rewriteNote?.ok && rewriteNote.changed && <p><b>The letter above has been rewritten.</b> Read it through and edit anything you like. No figure or date was added.</p>}
+                    {rewriteNote?.ok && !rewriteNote.changed && <p className="text-caution">{rewriteNote.unclear ?? "Nothing needed to change."}</p>}
+                    {rewriteNote?.ok && <p className="text-ink-soft">{rewriteNote.source === "rules" ? "Done by the built-in rewriter (the AI model was not available). " : "Rewritten by the AI model, which sees only this letter and your sentence. "}A rewrite that adds a figure or date is rejected. {rewriteNote.remaining} rewrite{rewriteNote.remaining === 1 ? "" : "s"} left on this case.</p>}
+                    {undo[tab] && <button type="button" className="text-accent underline" onClick={() => { setLetters((p) => ({ ...p, [tab]: undo[tab] })); setUndo((u) => { const n = { ...u }; delete n[tab]; return n; }); setRewriteNote(null); }}>Undo the rewrite</button>}
+                  </div>
+                </section>
               )}
               {!lettersOk && <p className="text-xs text-caution">Every letter needs a subject and at least one paragraph.</p>}
             </>

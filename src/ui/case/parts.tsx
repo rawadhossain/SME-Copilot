@@ -129,7 +129,7 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
                 <div className="flex flex-col gap-2">
                   <Btn variant={selected === p.id ? "primary" : "secondary"} onClick={() => onSelect(p.id)} aria-pressed={selected === p.id}>{selected === p.id ? "Shown on the chart" : "Show on the chart"}</Btn>
                   {canSign && <Btn variant="ghost" onClick={() => onEdit(p.id)}>Adjust terms…</Btn>}
-                  {canSign && <Btn variant="ghost" onClick={() => onSign(p.id)}>Review and sign…</Btn>}
+                  {canSign && (p.plan.blockers?.length ? <Btn variant="ghost" disabled title="A payment these terms imply would break your signed limits. Use Adjust terms to fix it.">Cannot be signed as it is</Btn> : <Btn variant="ghost" onClick={() => onSign(p.id)}>Review and sign…</Btn>)}
                 </div>
               </td>
             ))}</tr>

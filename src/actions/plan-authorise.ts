@@ -210,5 +210,13 @@ export async function previewAuthorisation(db: Db, businessId: string, input: un
   const terms = buildTerms(levers, ctx.pending.map((p) => p.event), tol, feeCap, (plan?.plan as { financeFeeBps?: number } | undefined)?.financeFeeBps, preview.confirmations as 1 | 2);
   const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId));
   const letters = draftLetters({ terms, counterparties: ctx.counterparties, business: biz?.name ?? "", owner: owner.name, expiresAt: String(preview.expiresAt), currency: ctx.currency });
+  // Notes the owner wrote per counterparty while adjusting the terms are added to that counterparty's letter, before the closing paragraph.
+  const notes = ((plan?.plan as { ownerNotes?: Record<string, string> } | undefined)?.ownerNotes ?? {});
+  for (const [cpId, note] of Object.entries(notes)) {
+    const letter = letters[cpId];
+    if (!letter || !note.trim()) continue;
+    const at = letter.paragraphs.findIndex((p) => p.startsWith("The proposed terms are set out"));
+    letter.paragraphs.splice(at >= 0 ? at : Math.max(1, letter.paragraphs.length - 2), 0, note.trim());
+  }
   return { ...preview, letters, termLines: termLinesFor(terms, ctx.currency), counterparties: ctx.counterparties.filter((c) => c.id in letters).map((c) => ({ id: c.id, name: c.name, role: c.role })), business: biz?.name ?? "", owner: owner.name };
 }

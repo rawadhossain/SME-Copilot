@@ -189,7 +189,7 @@ export function EditPlanDialog({ open, onClose, runId, plan, names, counterparti
         {noted.length > 0 && (
           <section>
             <h3 className="mb-1 font-medium">Your notes <span className="font-normal text-ink-soft">(optional)</span></h3>
-            <p className="mb-2 text-xs text-ink-soft">Kept with this plan and in the record, for you and your team. Counterparties receive the structured terms only, never this text.</p>
+            <p className="mb-2 text-xs text-ink-soft">Added to the letter to that counterparty when you sign, where you can still edit or remove it.</p>
             <div className="space-y-2">{noted.map((id) => <Field key={id} label={nameOf(names, id)}><input className={inputClass} maxLength={300} value={notes[id] ?? ""} onChange={(e) => { setNotes((n) => ({ ...n, [id]: e.target.value })); setResult(null); }} /></Field>)}</div>
           </section>
         )}
