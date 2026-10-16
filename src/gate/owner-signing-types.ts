@@ -21,6 +21,9 @@ export interface PlanAuthorisationMessage {
   expiresAt: string; // ISO timestamp
   mandateVersion: number;
   mandateHash: string;
+  /** Batch 14: SHA-256 of the proposal letters the owner approved, and of the drawn signature image. Absent on authorisations signed before. */
+  lettersHash?: string;
+  signatureHash?: string;
 }
 
 /** The exact text a plan-authorisation signature covers. The purpose tag keeps it from being valid as any other signature. */

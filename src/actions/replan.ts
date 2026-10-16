@@ -11,7 +11,7 @@ import type { PlanView } from "@/domain/plan";
 import { toJsonValue } from "@/sandbox/proposals";
 import { buildContext, startRun, type RunOptions, type RunSummary } from "./agent-run";
 import { appendRecord } from "./log";
-import type { ExecutionOutcome } from "./plan-exec";
+import { releaseHeld, type ExecutionOutcome } from "./plan-exec";
 import { ACTION_EVENTS, ActionError, type Db } from "./types";
 import { planAuthorisations } from "@/db/schema";
 
@@ -30,7 +30,7 @@ export interface ReplanResult {
 }
 
 /** Anything the failed attempt left live in the sandbox? (It must be empty before a new plan is proposed.) */
-async function liveLeftovers(db: Db, businessId: string, outcome: ExecutionOutcome): Promise<string[]> {
+export async function liveLeftovers(db: Db, businessId: string, outcome: ExecutionOutcome): Promise<string[]> {
   const left: string[] = [];
   const threadIds = outcome.branches.map((b) => b.threadId).filter((x): x is string => !!x);
   const appIds = outcome.branches.map((b) => b.applicationId).filter((x): x is string => !!x);
@@ -59,7 +59,11 @@ export async function replanFromExecution(db: Db, authorisationIdInput: string, 
     return { status: "replanned", parentRunId: run.id, newRunId: run.successorRunId, round: run.round + 1, constraints: parentConstraints, plans: rows.map((p) => p.plan as unknown as PlanView) };
   }
   if (exec.status !== "needs_replan") throw new ActionError("conflict", `The execution is ${exec.status}; only a plan that needs a re-plan can be re-planned`);
-  const outcome = exec.outcome as ExecutionOutcome;
+  // The agent plans from scratch, so agreements kept on hold for the owner (Batch 13) are withdrawn first.
+  const released = await releaseHeld(db, authorisationId);
+  if (!released.ok) throw new ActionError("refused", "A held agreement could not be withdrawn; nothing was re-planned");
+  const [fresh] = await db.select().from(planExecutions).where(eq(planExecutions.authorisationId, authorisationId));
+  const outcome = fresh.outcome as ExecutionOutcome;
   const dirty = await liveLeftovers(db, businessId, outcome);
   if (dirty.length > 0) throw new ActionError("refused", "The failed attempt left state live; it must be withdrawn before a new plan is proposed", dirty);
 

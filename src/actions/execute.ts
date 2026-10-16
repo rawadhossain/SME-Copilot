@@ -1,12 +1,15 @@
 // Step 3: execute an approved action. The ONLY code (with the bank tick below) that calls sandbox write operations.
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { actionProposals, approvals, sandboxBankAccounts } from "@/db/schema";
+import { actionProposals, approvals, businesses, sandboxBankAccounts } from "@/db/schema";
 import { evaluate, requestSchema, verifyApprovalSignature, type GateRequest } from "@/gate";
 import { acceptApplicationOffer, cancelPayment, cancelReceipt, executeDuePayments, executeDueReceipts, schedulePayment, scheduleReceipt, sendProposal, submitApplication, withdrawApplication, withdrawThread } from "@/sandbox";
 import { toJsonValue } from "@/sandbox/proposals";
 import { appendRecord } from "./log";
 import { authorisationCovers, checkAuthorisationCurrent, checkAuthorisationIntegrity, createdByAuthorisation } from "./plan-authority";
+import { messageBody } from "./plan-letters";
+import type { PlanTerms } from "./plan-terms";
+import { canonicalize } from "@/gate/canonical";
 import { isExpired, payloadHashOf } from "./propose";
 import { loadGateState, loadSignedMandate, needsProjection, worldDate } from "./state";
 import { ACTION_EVENTS, ActionError, type Db } from "./types";
@@ -45,6 +48,8 @@ export async function executeAction(db: Db, proposalIdInput: string): Promise<{ 
   if (!payloadOk) return refuse(db, businessId, proposalId, "The action payload no longer matches the payload that was approved or authorised", { currentHash: payloadHashOf(proposal.payload) });
   let approval: typeof approvals.$inferSelect | null = null;
   let authority: { authorisationId: string; confirmations: 1 | 2 } | null = null;
+  // Batch 14: the owner-signed letter that goes with the FIRST send to a counterparty (rebuilt from the hash-checked authorisation).
+  let coverText: string | undefined;
 
   if (request.kind === "sandbox.withdraw") {
     // Compensation (ADR-017): needs no approval and no mandate, but may only undo what this plan authorisation's own actions created.
@@ -63,6 +68,19 @@ export async function executeAction(db: Db, proposalIdInput: string): Promise<{ 
     const notCovered = await authorisationCovers(db, cur.auth, cur.terms, request);
     if (notCovered) return refuse(db, businessId, proposalId, notCovered);
     authority = { authorisationId: cur.auth.id, confirmations: cur.terms.confirmations ?? 1 };
+    if (request.kind === "sandbox.send_proposal" || request.kind === "sandbox.submit_application") {
+      const cpId = request.kind === "sandbox.send_proposal" ? request.counterpartyId : request.lenderId;
+      const own = (cur.terms as PlanTerms).entries.some((e) => {
+        const r = requestSchema.parse(e.request);
+        return request.kind === "sandbox.send_proposal" ? r.kind === "sandbox.send_proposal" && r.counterpartyId === cpId && canonicalize(r.proposal) === canonicalize(request.proposal) : r.kind === "sandbox.submit_application" && r.lenderId === cpId;
+      });
+      if (own) {
+        const [biz] = await db.select({ currency: businesses.baseCurrency }).from(businesses).where(eq(businesses.id, businessId));
+        const body = messageBody(cur.auth, cur.terms as PlanTerms, cpId, biz?.currency ?? "GBP", request.kind === "sandbox.submit_application" ? request.invoiceAmountMinor : undefined);
+        if (body && !body.ok) return refuse(db, businessId, proposalId, body.reason);
+        if (body) coverText = body.text;
+      }
+    }
   } else {
     // Approval binding: exact payload, owner signature, single use, not expired.
     const [found] = await db.select().from(approvals).where(and(eq(approvals.businessId, businessId), eq(approvals.proposalId, proposalId))).orderBy(desc(approvals.createdAt)).limit(1);
@@ -105,7 +123,7 @@ export async function executeAction(db: Db, proposalIdInput: string): Promise<{ 
     const key = `act-${proposalId}`;
     switch (request.kind) {
       case "sandbox.send_proposal": {
-        const r = await sendProposal(db, businessId, request.counterpartyId, toJsonValue(request.proposal));
+        const r = await sendProposal(db, businessId, request.counterpartyId, toJsonValue(request.proposal), { coverText });
         result = { outboundMessageId: r.outboundMessageId, inboundMessageId: r.inboundMessageId, threadId: r.threadId, threadStatus: r.threadStatus, outcome: r.response.outcome, terms: r.response.terms };
         break;
       }
@@ -117,7 +135,7 @@ export async function executeAction(db: Db, proposalIdInput: string): Promise<{ 
         break;
       }
       case "sandbox.submit_application": {
-        const r = await submitApplication(db, businessId, request.lenderId, request.invoiceAmountMinor, request.advanceBps, key);
+        const r = await submitApplication(db, businessId, request.lenderId, request.invoiceAmountMinor, request.advanceBps, key, { coverText });
         result = { applicationId: r.application.id, reference: r.application.reference, status: r.application.status };
         break;
       }

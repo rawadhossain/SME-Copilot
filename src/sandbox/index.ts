@@ -42,7 +42,7 @@ export interface ProposalResult {
 
 const canonical = (v: unknown) => JSON.stringify(toJsonValue(v));
 
-export async function sendProposal(db: Db, businessId: string, counterpartyId: string, proposalInput: unknown): Promise<ProposalResult> {
+export async function sendProposal(db: Db, businessId: string, counterpartyId: string, proposalInput: unknown, opts: { coverText?: string } = {}): Promise<ProposalResult> {
   const proposal: Proposal = proposalSchema.parse(proposalInput);
   const structured = toJsonValue(proposal);
 
@@ -77,7 +77,7 @@ export async function sendProposal(db: Db, businessId: string, counterpartyId: s
 
     const [outbound] = await tx
       .insert(sandboxMessages)
-      .values({ businessId, threadId: thread.id, counterpartyId, direction: "outbound", kind: "proposal", body: describeProposal(proposal), structured, untrusted: false })
+      .values({ businessId, threadId: thread.id, counterpartyId, direction: "outbound", kind: "proposal", body: opts.coverText ?? describeProposal(proposal), structured, untrusted: false })
       .returning();
 
     const response = respond(profile, proposal);
@@ -177,7 +177,7 @@ export async function cancelPayment(db: Db, businessId: string, paymentId: strin
 
 const applySchema = z.object({ lenderId: z.string().uuid(), invoiceAmountMinor: z.bigint().positive(), advanceBps: z.number().int().min(0).max(10000), idempotencyKey: keySchema });
 
-export async function submitApplication(db: Db, businessId: string, lenderId: string, invoiceAmountMinor: bigint, advanceBps: number, idempotencyKey: string) {
+export async function submitApplication(db: Db, businessId: string, lenderId: string, invoiceAmountMinor: bigint, advanceBps: number, idempotencyKey: string, opts: { coverText?: string } = {}) {
   const input = applySchema.parse({ lenderId, invoiceAmountMinor, advanceBps, idempotencyKey });
   return db.transaction(async (tx) => {
     const [existing] = await tx.select().from(sandboxApplications).where(and(eq(sandboxApplications.businessId, businessId), eq(sandboxApplications.idempotencyKey, input.idempotencyKey)));
@@ -198,7 +198,7 @@ export async function submitApplication(db: Db, businessId: string, lenderId: st
       .values({
         businessId, lenderId: lender.id, kind: "invoice_finance", requestedAmountMinor: input.invoiceAmountMinor, currency: biz.baseCurrency,
         status: response.outcome === "offer" ? "offered" : "declined",
-        offer: toJsonValue({ request: { invoiceAmountMinor: input.invoiceAmountMinor, advanceBps: input.advanceBps }, response }),
+        offer: toJsonValue({ request: { invoiceAmountMinor: input.invoiceAmountMinor, advanceBps: input.advanceBps }, response, ...(opts.coverText ? { coverText: opts.coverText } : {}) }),
         reference: `APP-${sha(`${businessId}:${input.idempotencyKey}`).slice(0, 10).toUpperCase()}`,
         idempotencyKey: input.idempotencyKey,
       })

@@ -118,6 +118,32 @@ export function leverProblems(ctx: AgentToolContext, levers: Lever[]): string[] 
   return problems;
 }
 
+/**
+ * The supplier payments a lever set implies (the engine's changed events), checked against the signed per-payment and daily limits. The gate checks
+ * these payments again at run time and would stop the plan; this finds the problem while the owner is still choosing. Pure.
+ */
+export function impliedPaymentBlockers(ctx: AgentToolContext, events: { kind: string; date: string; amountMinor: bigint }[]): string[] {
+  const m = mandateOf(ctx);
+  if (!m.ok) return [];
+  const unmatched = [...baseEventsOf(ctx)];
+  const added: { kind: string; date: string; amountMinor: bigint }[] = [];
+  for (const e of events) {
+    const i = unmatched.findIndex((b) => b.kind === e.kind && b.date === e.date && b.amountMinor === e.amountMinor);
+    if (i >= 0) unmatched.splice(i, 1);
+    else added.push(e);
+  }
+  const pays = added.filter((e) => (e.kind === "supplier_deposit" || e.kind === "supplier_balance") && e.amountMinor < 0n).map((e) => ({ date: e.date, amount: -e.amountMinor, kind: e.kind }));
+  const maxPayment = BigInt(String(m.mandate.limits.maxPaymentMinor));
+  const maxDaily = BigInt(String(m.mandate.limits.maxDailyOutflowMinor));
+  const out: string[] = [];
+  const label = (k: string) => (k === "supplier_deposit" ? "supplier deposit" : "supplier balance payment");
+  for (const p of pays) if (p.amount > maxPayment) out.push(`The ${label(p.kind)} these terms imply is ${fmt(p.amount.toString(), ctx.currency)} on ${p.date}, above your per-payment limit of ${fmt(maxPayment.toString(), ctx.currency)}, so the plan would be stopped when it runs`);
+  const byDate = new Map<string, bigint>();
+  for (const p of pays) byDate.set(p.date, (byDate.get(p.date) ?? 0n) + p.amount);
+  for (const [date, total] of byDate) if (total > maxDaily && pays.filter((p) => p.date === date).length > 1) out.push(`The supplier payments these terms imply on ${date} total ${fmt(total.toString(), ctx.currency)}, above your daily limit of ${fmt(maxDaily.toString(), ctx.currency)}`);
+  return out;
+}
+
 /** Pure gate dry-run per lever. Writes nothing. */
 export function dryRun(ctx: AgentToolContext, levers: Lever[]): LeverCheck[] {
   const base = baseEventsOf(ctx);
@@ -158,7 +184,7 @@ export function assumptionsFor(ctx: AgentToolContext, levers: Lever[]): string[]
 export type BuildResult = { ok: true; view: PlanView } | { ok: false; reasons: string[] };
 
 /** Everything a plan needs: validation, engine metrics, gate dry-run, checked prose. */
-export function buildPlanView(ctx: AgentToolContext, sub: PlanSubmission, source: "ai" | "deterministic"): BuildResult {
+export function buildPlanView(ctx: AgentToolContext, sub: PlanSubmission, source: "ai" | "deterministic" | "owner"): BuildResult {
   const reasons: string[] = [];
   reasons.push(...leverProblems(ctx, sub.levers));
   sub.contingencies.forEach((c: Contingency, i) => {
@@ -183,6 +209,7 @@ export function buildPlanView(ctx: AgentToolContext, sub: PlanSubmission, source
   const m = mandateOf(ctx);
   if (m.ok) collectNumbers({ ...m.mandate.limits, allowedProposalKinds: undefined }, allowed);
 
+  const blockers = impliedPaymentBlockers(ctx, sim.events);
   const title = checkProse(sub.title, allowed);
   const rationale = checkProse(sub.rationale, allowed);
   const removed = [...title.removed, ...rationale.removed];
@@ -203,6 +230,7 @@ export function buildPlanView(ctx: AgentToolContext, sub: PlanSubmission, source
       ...(sub.levers.some((l) => l.kind === "finance_invoice") ? { financeFeeBps: ctx.financeFeeBps } : {}),
       proseFlagged: removed.length > 0,
       removedSentences: removed,
+      ...(blockers.length > 0 ? { blockers, warnings: blockers.map((b) => `${b}.`) } : {}),
     },
   };
 }

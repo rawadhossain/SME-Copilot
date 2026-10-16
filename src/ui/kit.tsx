@@ -80,7 +80,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 export const inputClass = "w-full rounded-lg border border-line-strong bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-soft/60";
 
 /** A modal built on <dialog>: focus is trapped by the browser and Escape closes it. */
-export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -89,7 +89,7 @@ export function Modal({ open, onClose, title, children }: { open: boolean; onClo
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} onClose={onClose} onCancel={onClose} aria-label={title}>
+    <dialog ref={ref} onClose={onClose} onCancel={onClose} aria-label={title} className={wide ? "wide" : undefined}>
       <div className="p-6">
         <div className="mb-3 flex items-start justify-between gap-4"><h2 className="display text-xl">{title}</h2><button onClick={onClose} aria-label="Close" className="rounded p-1 text-ink-soft hover:bg-neutral-soft">✕</button></div>
         {open && children}

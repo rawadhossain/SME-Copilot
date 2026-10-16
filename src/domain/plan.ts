@@ -76,12 +76,20 @@ export interface PlanView {
   levers: Lever[];
   contingencies: Contingency[];
   rationale: string;
-  source: "ai" | "deterministic";
+  source: "ai" | "deterministic" | "owner";
+  /** Set when the owner adjusted the levers of another plan (Batch 13); that plan's id. */
+  editedFrom?: string;
+  /** The owner's own plain-text notes per counterparty id (Batch 13). Kept with the plan and the log; NOT part of the signed terms and not sent. */
+  ownerNotes?: Record<string, string>;
+  /** True when contingencies of the base plan could not be carried over to the edited terms. */
+  contingenciesDropped?: boolean;
   metrics: PlanMetrics;
   checks: LeverCheck[];
   assumptions: string[];
   /** Set by code, never by the model (for example: the plan dips below zero while a feasible plan exists). */
   warnings?: string[];
+  /** Set by code: the plan cannot run as it stands because a payment its terms imply breaks a signed limit (for example the supplier balance above the per-payment limit). Owner edits with blockers are refused. */
+  blockers?: string[];
   proseFlagged: boolean;
   removedSentences: string[];
   /** Finance fee (basis points of the invoice) that the metrics assume; set when the plan has a finance lever. */

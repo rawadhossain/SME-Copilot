@@ -56,7 +56,7 @@ export function describeTerms(terms: PlanTerms, names: Record<string, string>, c
   return {
     asks,
     then: [
-      "Anything outside the accepted terms stops the plan: nothing is kept, everything agreed so far is withdrawn, and a re-plan is offered.",
+      "Anything outside the accepted terms stops the plan: nothing is committed or paid, the agreements already reached are kept on hold, and you decide whether to revise the terms, ask for a re-plan or withdraw everything.",
       "If every counterparty agrees, the system schedules only the payments and receipts those exact terms imply, each one checked again against your mandate and your projected balance.",
       "An independent check then recomputes your forecast from what was actually agreed and tells you if it differs from the plan.",
     ],

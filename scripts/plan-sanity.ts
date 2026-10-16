@@ -26,7 +26,7 @@ async function main() {
   const { confirmExtraction } = await import("../src/ingest/documents/confirm");
   const { startRun, buildContext } = await import("../src/actions/agent-run");
   const { approveAuthorisation, authorisePlan } = await import("../src/actions/plan-authorise");
-  const { executePlan } = await import("../src/actions/plan-exec");
+  const { executePlan, releaseHeld } = await import("../src/actions/plan-exec");
   const { verifyPlanExecution } = await import("../src/actions/plan-verify");
   const { getPlanAuthorisation } = await import("../src/actions/plan-read");
   const { replanFromExecution } = await import("../src/actions/replan");
@@ -238,11 +238,14 @@ async function main() {
     const sc = await rows<{ topic: string; status: string }>`SELECT topic, status FROM sandbox_threads WHERE business_id = ${H.biz.id}`;
     assert.deepEqual(sc.map((t) => t.status), ["rejected"], "the thread stays rejected; nothing agreed");
     const appsH = await rows<{ status: string }>`SELECT status FROM sandbox_applications WHERE business_id = ${H.biz.id}`;
-    assert.deepEqual(appsH.map((a) => a.status), ["withdrawn"], "the finance offer was not taken up and was withdrawn");
+    assert.deepEqual(appsH.map((a) => a.status), ["offered"], "the finance offer is kept on hold for the owner (not taken up)");
+    assert.equal((await releaseHeld(db, authH.authorisationId)).released, 1, "releasing the hold withdraws it");
+    const appsH2 = await rows<{ status: string }>`SELECT status FROM sandbox_applications WHERE business_id = ${H.biz.id}`;
+    assert.deepEqual(appsH2.map((a) => a.status), ["withdrawn"], "the finance offer was withdrawn on release");
     const kindsH = await rows<{ kind: string }>`SELECT kind FROM action_proposals WHERE business_id = ${H.biz.id}`;
     assert.ok(!kindsH.some((k) => k.kind === "sandbox.accept_offer"), "no accept action exists");
     assert.equal((await sandboxCounts(H.biz.id)).payments, 0);
-    console.log(`  4 supplier rejects: status needs_replan; branches ${runH.outcome.branches.map((b) => b.status).join("/")}; no acceptance; finance offer withdrawn`);
+    console.log(`  4 supplier rejects: status needs_replan; branches ${runH.outcome.branches.map((b) => b.status).join("/")}; no acceptance; finance offer held, then withdrawn on release`);
     await chainOk(H.biz.id);
 
     // ================= 5. Counters =================
@@ -425,6 +428,185 @@ async function main() {
     assert.equal(sbN.entries[0].status, "exhausted");
     assert.equal(sbN.entries[0].executedPlan, null);
     console.log(`  4 scoreboard: re-planned commitment: do nothing lowest ${gbp(e0.doNothing!.minBalanceMinor)} -> executed ${gbp(e0.executedPlan!.minBalanceMinor)} (verified, ${e0.ownerApprovals} owner approvals); exhausted commitment: "${sbN.entries[0].label}"`);
+
+    // ================= 9. Owner plan edit (Batch 13, no model) =================
+    {
+    const { editPlan } = await import("../src/actions/plan-edit");
+    const E = await setup("E");
+    const planE = await E.addPlan(lever3(E));
+    const plansBefore = (await rows<{ n: number }>`SELECT count(*)::int n FROM plans WHERE run_id = ${E.runId}`)[0].n;
+    const edited = lever3(E).map((l) => (l.kind === "supplier_reduce_deposit" ? { ...l, percentBps: 1700 } : l));
+    const prev = await editPlan(db, E.biz.id, { runId: E.runId, basePlanId: planE.id, levers: edited });
+    assert.ok(prev.ok && !prev.committed && !prev.unchanged, "preview recomputes the plan");
+    assert.equal((await rows<{ n: number }>`SELECT count(*)::int n FROM plans WHERE run_id = ${E.runId} AND plan_hash = ${planId(edited)}`)[0].n, 0, "preview writes nothing");
+    assert.notEqual(prev.ok && prev.plan.metrics.minBalanceMinor, planE.metrics.minBalanceMinor, "the edit changed the engine numbers");
+    const done = await editPlan(db, E.biz.id, { runId: E.runId, basePlanId: planE.id, levers: edited, notes: { [E.supplierId]: "Please confirm by Friday" }, commit: true });
+    assert.ok(done.ok && done.committed && done.plan.source === "owner" && done.plan.editedFrom === planE.id && done.plan.ownerNotes?.[E.supplierId] === "Please confirm by Friday", "owner plan keeps the owner note");
+    const authE = await authorisePlan(db, E.biz.id, { runId: E.runId, confirmations: 2, planId: planId(edited) }, "Test Owner");
+    assert.equal(authE.status, "authorised", "an edited plan can be signed like any other");
+    {
+      // An owner note written while adjusting the terms now goes into that counterparty's letter (Batch 14).
+      const { previewAuthorisation } = await import("../src/actions/plan-authorise");
+      const pv = (await previewAuthorisation(db, E.biz.id, { runId: E.runId, planId: planId(edited), confirmations: 2 }, { name: "Alex Mercer" })) as unknown as { letters: Record<string, { paragraphs: string[] }> };
+      assert.ok(pv.letters[E.supplierId].paragraphs.some((x) => x === "Please confirm by Friday"), "the owner's note is a paragraph of the supplier letter");
+    }
+    const bad = await editPlan(db, E.biz.id, { runId: E.runId, basePlanId: planE.id, levers: lever3(E).map((l) => (l.kind === "supplier_reduce_deposit" ? { ...l, percentBps: 9900 } : l)), commit: true });
+    assert.ok(!bad.ok && bad.reasons.length > 0, "an edit outside the bounds is refused with reasons");
+    assert.equal((await rows<{ n: number }>`SELECT count(*)::int n FROM plans WHERE run_id = ${E.runId}`)[0].n, plansBefore + 1, "only the valid edit was stored");
+    const tooBig = await editPlan(db, E.biz.id, { runId: E.runId, basePlanId: planE.id, levers: lever3(E).map((l) => (l.kind === "supplier_reduce_deposit" ? { ...l, percentBps: 1500 } : l)) });
+    assert.ok(!tooBig.ok && tooBig.reasons.some((r) => /per-payment limit/.test(r)), "a deposit that makes the balance payment exceed the per-payment limit is refused while choosing, not at run time");
+    await chainOk(E.biz.id);
+    console.log(`  9 owner plan edit: preview wrote nothing; commit stored an owner plan (deposit 20% -> 17%, lowest ${gbp(prev.ok ? prev.plan.metrics.minBalanceMinor : "0")}), signed; out-of-bounds edit refused with reasons`);
+    }
+
+    // ================= 10. Owner revision after a counterparty pushes back (Batch 13, no model) =================
+    {
+      const { reviseFromExecution } = await import("../src/actions/revise");
+      const R2 = await setup("R2");
+      const planR2 = await R2.addPlan([{ kind: "buyer_request_deposit", counterpartyId: R2.buyerId, percentBps: 2000 }, { kind: "finance_invoice", counterpartyId: R2.lenderId, advanceBps: 8000 }]);
+      const authR2 = await authorisePlan(db, R2.biz.id, { runId: R2.runId, planId: planR2.id }, "Test Owner");
+      const runR2 = await executePlan(db, authR2.authorisationId);
+      assert.equal(runR2.status, "needs_replan");
+      const stillAsk = await reviseFromExecution(db, authR2.authorisationId, { levers: planR2.levers });
+      assert.ok(!stillAsk.ok && stillAsk.reasons.some((r) => /10%/.test(r)), "asking the buyer for 20% again is refused: it said 10% at most");
+      const agreed: Lever[] = planR2.levers.map((l) => (l.kind === "buyer_request_deposit" ? { ...l, percentBps: 1000 } : l));
+      const check = await reviseFromExecution(db, authR2.authorisationId, { levers: agreed });
+      assert.ok(check.ok && !check.committed && check.newRunId === null, "checking the revision writes nothing");
+      const runsBefore = (await rows<{ n: number }>`SELECT count(*)::int n FROM agent_runs WHERE business_id = ${R2.biz.id}`)[0].n;
+      const opened = await reviseFromExecution(db, authR2.authorisationId, { levers: agreed, commit: true });
+      assert.ok(opened.ok && opened.committed && opened.newRunId);
+      assert.equal((await rows<{ n: number }>`SELECT count(*)::int n FROM agent_runs WHERE business_id = ${R2.biz.id}`)[0].n, runsBefore + 1);
+      const [pr] = await rows<{ lifecycle: string; successor_run_id: string }>`SELECT lifecycle, successor_run_id FROM agent_runs WHERE id = ${R2.runId}`;
+      assert.equal(pr.lifecycle, "replanned");
+      assert.equal(pr.successor_run_id, opened.newRunId);
+      const authR3 = await authorisePlan(db, R2.biz.id, { runId: opened.newRunId!, planId: opened.plan.id, confirmations: 2 }, "Test Owner");
+      assert.equal(authR3.status, "authorised", "the revised plan needs and gets a new signature");
+      const runR3 = await executePlan(db, authR3.authorisationId);
+      assert.equal(runR3.status, "completed", JSON.stringify(runR3.verification?.explanation ?? runR3.outcome));
+      await chainOk(R2.biz.id);
+      console.log("  10 owner revision: buyer capped at 10% -> owner revises (re-asking 20% refused, 10% accepted, check wrote nothing) -> new round signed -> executed and verified");
+    }
+
+    // ================= 11. Partial revision: the vendor that agreed is kept, only the one that pushed back is asked again =================
+    {
+      const { reviseFromExecution } = await import("../src/actions/revise");
+      const T = await setup("T");
+      // Headroom (clone only): this deal has no finance lever, so the balance payment must be backed by cash on hand.
+      await owner`UPDATE financial_accounts SET balance_minor = balance_minor + 10000000 WHERE business_id = ${T.biz.id}`;
+      await owner`UPDATE sandbox_bank_accounts SET balance_minor = balance_minor + 10000000 WHERE business_id = ${T.biz.id}`;
+      await owner`UPDATE counterparties SET profile = profile || '{"maxSupplierDepositReductionBps":1000}'::jsonb WHERE id = ${T.supplierId}`; // supplier floor 20%
+      const planT = await T.addPlan([{ kind: "supplier_reduce_deposit", counterpartyId: T.supplierId, percentBps: 1500 }, { kind: "buyer_request_deposit", counterpartyId: T.buyerId, percentBps: 1000 }]);
+      const authT = await authorisePlan(db, T.biz.id, { runId: T.runId, confirmations: 2, planId: planT.id }, "Test Owner");
+      const runT = await executePlan(db, authT.authorisationId);
+      assert.equal(runT.status, "needs_replan");
+      assert.deepEqual(runT.outcome.branches.map((b) => b.status).sort(), ["agreed", "needs_replan"], "the buyer agreed; the supplier pushed back");
+      assert.equal(runT.outcome.held, true, "the buyer's agreement is kept on hold");
+      const buyerThreads = () => rows<{ status: string }>`SELECT status FROM sandbox_threads WHERE business_id = ${T.biz.id} AND counterparty_id = ${T.buyerId}`;
+      assert.deepEqual((await buyerThreads()).map((t) => t.status), ["agreed"], "the buyer thread is still agreed after the pause");
+      const revised: Lever[] = planT.levers.map((l) => (l.kind === "supplier_reduce_deposit" ? { ...l, percentBps: 2000 } : l));
+      const prevT = await reviseFromExecution(db, authT.authorisationId, { levers: revised });
+      assert.ok(prevT.ok && prevT.kept.length === 1 && prevT.kept[0].kind === "buyer_request_deposit" && prevT.askedAgain.length === 1 && prevT.askedAgain[0].kind === "supplier_reduce_deposit", "the preview says what stays and what is asked again");
+      const openedT = await reviseFromExecution(db, authT.authorisationId, { levers: revised, commit: true });
+      assert.ok(openedT.ok && openedT.committed);
+      assert.deepEqual((await buyerThreads()).map((t) => t.status), ["agreed"], "the buyer thread was not touched by the revision");
+      const authT2 = await authorisePlan(db, T.biz.id, { runId: openedT.newRunId!, confirmations: 2, planId: openedT.plan.id }, "Test Owner");
+      const runT2 = await executePlan(db, authT2.authorisationId);
+      assert.equal(runT2.status, "completed", JSON.stringify(runT2.outcome.failure ?? runT2.verification?.explanation));
+      assert.ok(runT2.outcome.branches.some((b) => b.kind === "buyer_request_deposit" && b.carriedFrom === authT.authorisationId), "the buyer agreement was taken over, not asked again");
+      const sentTo = async (cp: string) => (await rows<{ n: number }>`SELECT count(*)::int n FROM action_proposals WHERE business_id = ${T.biz.id} AND kind = 'sandbox.send_proposal' AND payload->>'counterpartyId' = ${cp}`)[0].n;
+      assert.equal(await sentTo(T.buyerId), 1, "the buyer got exactly one proposal in the whole deal");
+      assert.equal(await sentTo(T.supplierId), 2, "the supplier was asked twice (its first answer was a counter beyond the signed terms)");
+      await chainOk(T.biz.id);
+      // Changing the buyer's own term withdraws its old agreement; nothing is left behind. (Failure path: a deal that then fails rolls back the carried agreement too.)
+      const U = await setup("U");
+      await owner`UPDATE counterparties SET profile = profile || '{"maxSupplierDepositReductionBps":1000}'::jsonb WHERE id = ${U.supplierId}`;
+      const planU = await U.addPlan([{ kind: "supplier_reduce_deposit", counterpartyId: U.supplierId, percentBps: 1500 }, { kind: "buyer_request_deposit", counterpartyId: U.buyerId, percentBps: 1000 }]);
+      const authU = await authorisePlan(db, U.biz.id, { runId: U.runId, confirmations: 2, planId: planU.id }, "Test Owner");
+      await executePlan(db, authU.authorisationId);
+      const changed: Lever[] = planU.levers.map((l) => (l.kind === "supplier_reduce_deposit" ? { ...l, percentBps: 2000 } : { ...l, percentBps: 500 }));
+      const openedU = await reviseFromExecution(db, authU.authorisationId, { levers: changed, commit: true });
+      assert.ok(openedU.ok && openedU.committed && openedU.kept.length === 0 && openedU.askedAgain.length === 2);
+      const oldBuyer = await rows<{ status: string }>`SELECT status FROM sandbox_threads WHERE business_id = ${U.biz.id} AND counterparty_id = ${U.buyerId} ORDER BY created_at`;
+      assert.deepEqual(oldBuyer.map((t) => t.status), ["withdrawn"], "the buyer's old agreement was withdrawn because its term changed");
+      console.log("  11 partial revision: one vendor agreed and was kept (asked once in the whole deal), the vendor that pushed back was asked again; the new round executed and verified; changing the agreed vendor's own term withdraws its old agreement");
+    }
+
+    // ================= 12. Assistant-assisted edit (Batch 13): one structured call, code applies it, the same engine check decides =================
+    {
+      const { assistEdit } = await import("../src/actions/plan-assist");
+      const { editPlan } = await import("../src/actions/plan-edit");
+      const V = await setup("V");
+      const planV = await V.addPlan(lever3(V));
+      const before = (await rows<{ n: number }>`SELECT count(*)::int n FROM plans WHERE run_id = ${V.runId}`)[0].n;
+      process.env.PLAN_EDIT_ASSIST_MAX = "3";
+      const a1 = await assistEdit(db, V.biz.id, { runId: V.runId, instruction: "Make the deposit 17%, defer the balance 20 days and drop the finance", levers: planV.levers }, { gateway: mockGw });
+      assert.ok(a1.ok && a1.source === "model", "answered through the gateway (mock script)");
+      const get = (k: string) => (a1.ok ? a1.levers.find((l) => l.kind === k) : undefined) as Record<string, number> | undefined;
+      assert.equal(get("supplier_reduce_deposit")?.percentBps, 1700);
+      assert.equal(get("supplier_defer_balance")?.daysAfterShipment, 20);
+      assert.equal(get("finance_invoice"), undefined, "the finance term was dropped");
+      assert.equal((await rows<{ n: number }>`SELECT count(*)::int n FROM plans WHERE run_id = ${V.runId}`)[0].n, before, "the assistant saved nothing");
+      const prevV = await editPlan(db, V.biz.id, { runId: V.runId, basePlanId: planV.id, levers: a1.ok ? a1.levers : [] });
+      assert.ok(prevV.ok && !prevV.committed, "the suggested terms go through the same engine check and mandate check");
+      const a2 = await assistEdit(db, V.biz.id, { runId: V.runId, instruction: "Set the deposit to 150%", levers: planV.levers }, { gateway: mockGw });
+      assert.ok(a2.ok && a2.changes.length === 0 && a2.ignored.length > 0, "an out-of-range number is ignored and reported, never clamped or guessed");
+      const a3 = await assistEdit(db, V.biz.id, { runId: V.runId, instruction: "make it a bit better", levers: planV.levers }, { gateway: mockGw });
+      assert.ok(a3.ok && a3.changes.length === 0 && !!a3.unclear, "a vague instruction gives no edits and says why");
+      const a4 = await assistEdit(db, V.biz.id, { runId: V.runId, instruction: "deposit 10%", levers: planV.levers }, { gateway: mockGw });
+      assert.ok(!a4.ok && a4.remaining === 0, "the per-case cap stops a fourth call");
+      delete process.env.PLAN_EDIT_ASSIST_MAX;
+      await chainOk(V.biz.id);
+      console.log("  12 assistant edit: 'deposit 17%, defer 20 days, drop finance' -> three structured edits applied by code, nothing saved, the engine check accepts the result; 150% ignored; vague gives no edits; cap of 3 enforced");
+    }
+
+    // ================= 13. Proposal letters and the drawn signature (Batch 14) =================
+    {
+      const { previewAuthorisation } = await import("../src/actions/plan-authorise");
+      const { makeSignaturePng, makeBlankPng } = await import("./png-fixture");
+      type L = Record<string, { subject: string; paragraphs: string[] }>;
+      const W = await setup("W");
+      const planW = await W.addPlan(lever3(W));
+      const prevW = (await previewAuthorisation(db, W.biz.id, { runId: W.runId, planId: planW.id, confirmations: 2 }, { name: "Alex Mercer" })) as unknown as { letters: L; termLines: Record<string, string[]> };
+      assert.deepEqual(Object.keys(prevW.letters).sort(), [W.supplierId, W.lenderId].sort(), "one drafted letter per counterparty in the plan");
+      assert.ok(Object.values(prevW.letters).every((l) => /^Dear /.test(l.paragraphs[0]) && l.paragraphs.some((p) => /^Kind regards/.test(p)) && l.subject.length > 5), "professional drafts: greeting, subject, sign-off");
+      assert.ok(prevW.termLines[W.supplierId].some((t) => /^Deposit: 20% of the order value/.test(t)) && prevW.termLines[W.lenderId].some((t) => /^Invoice-finance advance: 80%/.test(t)), "the locked terms lines come from the signed terms");
+      const edited: L = JSON.parse(JSON.stringify(prevW.letters));
+      edited[W.supplierId].paragraphs[1] = "EDITED LINE: thank you for the quotation; we would like to adjust the terms.";
+      const base = { runId: W.runId, planId: planW.id, confirmations: 2 as const };
+      await assert.rejects(() => authorisePlan(db, W.biz.id, { ...base, letters: edited, signatureImage: makeBlankPng() }, "Alex Mercer"), /Please draw your signature/);
+      await assert.rejects(() => authorisePlan(db, W.biz.id, { ...base, letters: { [W.supplierId]: edited[W.supplierId] }, signatureImage: makeSignaturePng() }, "Alex Mercer"), /exactly one letter for each counterparty/);
+      const authW = await authorisePlan(db, W.biz.id, { ...base, letters: edited, signatureImage: makeSignaturePng() }, "Alex Mercer");
+      assert.equal(authW.status, "authorised");
+      assert.ok(authW.authorisation.lettersHash && authW.authorisation.signatureHash, "both fingerprints are stored and signed");
+      const runW = await executePlan(db, authW.authorisationId);
+      assert.equal(runW.status, "completed", JSON.stringify(runW.outcome.failure ?? runW.verification?.explanation));
+      const bodies = await rows<{ body: string; counterparty_id: string }>`SELECT body, counterparty_id FROM sandbox_messages WHERE business_id = ${W.biz.id} AND direction = 'outbound'`;
+      const sup = bodies.find((b) => b.counterparty_id === W.supplierId)!.body;
+      assert.ok(sup.includes("EDITED LINE") && sup.includes("Proposed terms") && sup.includes("Deposit: 20% of the order value") && /fingerprint [0-9a-f]{12}/.test(sup), "the supplier received the owner's edited wording, the locked terms and the signature reference");
+      const [appW] = await rows<{ offer: { coverText?: string } }>`SELECT offer FROM sandbox_applications WHERE business_id = ${W.biz.id}`;
+      assert.ok(appW.offer.coverText?.includes("Invoice-finance advance: 80%"), "the lender's application carries its letter");
+      await chainOk(W.biz.id);
+      // Failure path: editing the letters after signing is caught before anything is sent.
+      const X = await setup("X");
+      const planX = await X.addPlan(lever3(X));
+      const prevX = (await previewAuthorisation(db, X.biz.id, { runId: X.runId, planId: planX.id, confirmations: 2 }, { name: "Alex Mercer" })) as unknown as { letters: L };
+      const authX = await authorisePlan(db, X.biz.id, { runId: X.runId, planId: planX.id, confirmations: 2, letters: prevX.letters, signatureImage: makeSignaturePng() }, "Alex Mercer");
+      await owner`UPDATE plan_authorisations SET letters = '{}'::jsonb WHERE id = ${authX.authorisationId}`;
+      await assert.rejects(() => executePlan(db, authX.authorisationId), /letters were edited after they were signed/);
+      assert.equal((await sandboxCounts(X.biz.id)).threads, 0, "nothing was sent");
+      console.log("  13 letters and signature: drafted per counterparty, edited line and locked terms reached the supplier and lender, blank drawing and missing letter refused, letters edited after signing refused before sending");
+    }
+
+    // ================= 14. Plans that cannot run rank last (Batch 14) =================
+    {
+      const { demoteBlocked } = await import("../src/agent");
+      const mk = (id: string, blockers?: string[]) => ({ id, title: "Recommended: x", levers: [], contingencies: [], rationale: "", source: "ai", metrics: planA.metrics, checks: [], assumptions: [], proseFlagged: false, removedSentences: [], ...(blockers ? { blockers } : {}) }) as unknown as Parameters<typeof demoteBlocked>[0][number];
+      const ranked = demoteBlocked([mk("blocked", ["limit"]), mk("ok1"), mk("ok2")]);
+      assert.deepEqual(ranked.map((p) => p.id), ["ok1", "ok2", "blocked"], "a plan that cannot run goes after the ones that can");
+      assert.ok((ranked[2].warnings ?? []).length > 0 && !/^recommended/i.test(ranked[2].title), "and it is flagged and no longer called the recommendation");
+      assert.deepEqual(demoteBlocked([mk("a", ["limit"]), mk("b", ["limit"])]).map((p) => p.id), ["a", "b"], "if every plan is blocked the order is unchanged");
+      console.log("  14 blocked plans: demoted behind plans that can run, flagged, no longer recommended");
+    }
 
     // ================= 8. Layering =====
     writeFileSync(probe, [

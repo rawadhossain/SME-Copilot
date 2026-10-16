@@ -30,6 +30,11 @@ export async function sha256Hex(subtle, text) {
   return hex(await subtle.digest("SHA-256", enc.encode(text)));
 }
 
+async function sha256OfDataUrl(subtle, dataUrl) {
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl ?? "");
+  return m ? hex(await subtle.digest("SHA-256", b64(m[1]))) : null;
+}
+
 // Plans stored levers sorted (kind order, then canonical text); the levers hash is over that sorted list.
 const sortLevers = (levers) => [...levers].sort((a, b) => `${LEVER_ORDER.indexOf(a.kind)}:${canonicalize(a)}`.localeCompare(`${LEVER_ORDER.indexOf(b.kind)}:${canonicalize(b)}`));
 
@@ -64,10 +69,12 @@ export async function verifyBundle(bundle, subtle = globalThis.crypto.subtle) {
   for (const a of bundle.authorisations) {
     const label = `authorisation ${a.id.slice(0, 8)}`;
     if (!a.signature) { add(`${label} signature`, a.status !== "authorised" && a.status !== "used", `never signed (status ${a.status})`); continue; }
-    const message = { purpose: "plan.authorisation.v1", authorisationId: a.id, businessId: a.businessId, runId: a.runId, planId: a.planId, leversHash: a.leversHash, termsHash: a.termsHash, expiresAt: a.expiresAt, mandateVersion: a.mandateVersion, mandateHash: a.mandateHash };
+    const message = { purpose: "plan.authorisation.v1", authorisationId: a.id, businessId: a.businessId, runId: a.runId, planId: a.planId, leversHash: a.leversHash, termsHash: a.termsHash, expiresAt: a.expiresAt, mandateVersion: a.mandateVersion, mandateHash: a.mandateHash, ...(a.lettersHash ? { lettersHash: a.lettersHash } : {}), ...(a.signatureHash ? { signatureHash: a.signatureHash } : {}) };
     const sigOk = await verifySignature(subtle, pub, canonicalize(message), a.signature);
     add(`${label} signature`, sigOk, sigOk ? `signed by the owner key (approved by ${a.approvedBy})` : "SIGNATURE DOES NOT VERIFY");
     add(`${label} terms hash`, (await sha256Hex(subtle, canonicalize(a.terms))) === a.termsHash, "the exported requests and bounds are exactly what was signed");
+    if (a.lettersHash || a.letters) add(`${label} proposal letters`, !!a.letters && !!a.lettersHash && (await sha256Hex(subtle, canonicalize(a.letters))) === a.lettersHash, "the exported letters are exactly the wording the owner approved and signed");
+    if (a.signatureHash || a.signatureImage) add(`${label} drawn signature`, !!a.signatureImage && !!a.signatureHash && (await sha256OfDataUrl(subtle, a.signatureImage)) === a.signatureHash, "the exported signature drawing is exactly the image that was signed");
     const plan = bundle.runs.flatMap((r) => r.plans).find((p) => p.id === a.planId);
     add(`${label} plan hash`, !!plan && (await sha256Hex(subtle, canonicalize(sortLevers(plan.plan.levers)))) === a.leversHash, "the exported plan levers are exactly what was signed");
     const m = mandateByVersion[a.mandateVersion];

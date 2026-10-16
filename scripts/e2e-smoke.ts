@@ -11,6 +11,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeSignaturePng } from "./png-fixture";
 
 const RECORD = process.env.RECORD === "1";
 const REPLAY = process.env.REPLAY === "1";
@@ -138,11 +139,18 @@ async function main() {
       const prev = await api(`/api/business/${biz}/plan-authorisations/preview`, { body });
       assert.equal(prev.status, 200, JSON.stringify(prev.json));
       assert.ok(prev.json.summary.asks.length > 0 && prev.json.mandateVersion);
-      const noPw = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, password: "wrong", secondApprover: APPROVER } });
+      assert.ok(Object.keys(prev.json.letters).length > 0 && Object.values<any>(prev.json.letters).every((l) => /^Dear /.test(l.paragraphs[0])), "a professional first draft letter exists for each counterparty");
+      // Signing needs the letters AND a drawn signature as well as the password.
+      const noSig = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, letters: prev.json.letters, password: OWNER.password, secondApprover: APPROVER } });
+      assert.equal(noSig.status, 400, "no drawn signature, no signing");
+      const noLetters = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, signatureImage: makeSignaturePng(), password: OWNER.password, secondApprover: APPROVER } });
+      assert.equal(noLetters.status, 400, "no letters, no signing");
+      const signed = { letters: prev.json.letters, signatureImage: makeSignaturePng() };
+      const noPw = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: "wrong", secondApprover: APPROVER } });
       assert.equal(noPw.status, 403, "a wrong step-up password signs nothing");
-      const noSecond = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, password: OWNER.password, secondApprover: { email: OWNER.email, password: OWNER.password } } });
+      const noSecond = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: OWNER.password, secondApprover: { email: OWNER.email, password: OWNER.password } } });
       assert.equal(noSecond.status, 403, "the owner cannot be their own second approver");
-      const ok = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, password: OWNER.password, secondApprover: APPROVER } });
+      const ok = await api(`/api/business/${biz}/plan-authorisations`, { body: { ...body, ...signed, password: OWNER.password, secondApprover: APPROVER } });
       assert.equal(ok.status, 200, JSON.stringify(ok.json));
       return ok.json.authorisationId as string;
     };
@@ -207,7 +215,7 @@ async function main() {
       const runs = caseNow.runs as any[];
       const lastRun = runs[runs.length - 1];
       const html = [
-        renderToString(h(parts.PlanTable, { run: lastRun, names, cur: "GBP", selected: lastRun.plans[0].id, onSelect: () => {}, onSign: () => {}, canSign: true })),
+        renderToString(h(parts.PlanTable, { run: lastRun, names, cur: "GBP", selected: lastRun.plans[0].id, onSelect: () => {}, onSign: () => {}, onEdit: () => {}, canSign: true })),
         renderToString(h(parts.Timeline, { run: lastRun })),
         ...caseNow.authorisations.map((a: any) => renderToString(h(parts.ExecutionPanel, { auth: a, names, cur: "GBP", busy: false, onExecute: () => {} }))),
         ...caseNow.authorisations.filter((a: any) => a.execution?.verification).map((a: any) => renderToString(h(parts.VerificationPanel, { v: a.execution.verification, cur: "GBP" }))),

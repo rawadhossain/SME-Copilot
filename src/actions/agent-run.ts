@@ -11,7 +11,7 @@ import { z } from "zod";
 import { appendActionRecord } from "@/actionlog";
 import { ACTION_EVENTS, ActionError, type Db } from "./types";
 import { loadGateState, loadSignedMandate } from "./state";
-import { guardRanking, buildAgentTools, buildMessages, deterministicPlans, AGENT_PURPOSE, collectNumbers, doNothingSummary, type AgentToolContext, type PendingEvent } from "@/agent";
+import { guardRanking, demoteBlocked, buildAgentTools, buildMessages, deterministicPlans, AGENT_PURPOSE, collectNumbers, doNothingSummary, type AgentToolContext, type PendingEvent } from "@/agent";
 import { getGateway, type Gateway } from "@/ai";
 import { dbCallLogger } from "@/ai/db-logger";
 import { agentRuns, agentSteps, counterparties, documents, extractions, plans as plansTable } from "@/db/schema";
@@ -174,6 +174,7 @@ export async function startRun(db: Db, businessId: string, triggerInput: unknown
       plans = g.plans;
       for (const n of g.notes) await step("validation", n);
     }
+    plans = demoteBlocked(plans); // either source: a plan that cannot run is never ranked above one that can
     await step("note", { type: "do_nothing", metrics: doNothingSummary(ctx) });
     if (plans.length > 0) {
       await db.insert(plansTable).values(plans.map((p, i) => ({ businessId, runId: run.id, planHash: p.id, rank: i + 1, plan: toJsonValue(p) as Record<string, unknown> })));
