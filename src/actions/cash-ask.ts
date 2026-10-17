@@ -6,12 +6,13 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { ASK_SUGGESTIONS, CASH_ASK_PURPOSE, askOutputSchema, buildAskMessages, checkRewrite, classifyQuestion, detailLines, ruleAnswer, type AskFacts, type AskLedger, type AskPlanFact } from "@/agent";
+import { ASK_SUGGESTIONS, CASH_ASK_PURPOSE, type InsightFacts, type InsightTopic, askOutputSchema, buildAskMessages, checkRewrite, classifyQuestion, detailLines, ruleAnswer, type AskFacts, type AskLedger, type AskPlanFact } from "@/agent";
 import { getGateway, type Gateway } from "@/ai";
 import { dbCallLogger } from "@/ai/db-logger";
 import { actionRecords, agentRuns, plans } from "@/db/schema";
 import type { Lever, PlanView } from "@/domain/plan";
 import { appendRecord } from "./log";
+import { getInsights } from "./insights";
 import { getLedgerSummary } from "./ledger";
 import { getRoom } from "./room";
 import { ACTION_EVENTS, type Db } from "./types";
@@ -55,8 +56,18 @@ async function ledgerFacts(db: Db, businessId: string): Promise<AskLedger> {
   };
 }
 
+/** The findings as the assistant may see them. Evidence rows (names, bank descriptions) are left out: only code-written wording and figures go in. */
+async function gatherInsights(db: Db, businessId: string, topic: InsightTopic | null): Promise<InsightFacts> {
+  const r = await getInsights(db, businessId);
+  return {
+    asOf: r.asOf, status: r.status, headline: r.headline, comparable: r.periods.comparable, comparableReason: r.periods.reason, windowDays: r.periods.windowDays, topic,
+    findings: r.findings.map((f) => ({ id: f.id, kind: f.kind, severity: f.severity, title: f.title, why: f.why, figures: f.figures, comparison: f.comparison?.label ?? null, uncertainty: f.uncertainty, actions: f.actions.map((a) => a.label) })),
+    limits: r.limits,
+  };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function gatherFacts(db: Db, businessId: string, lateDays: number | null, withLedger = false): Promise<AskFacts> {
+async function gatherFacts(db: Db, businessId: string, lateDays: number | null, withLedger = false, insights: { topic: InsightTopic | null } | null = null): Promise<AskFacts> {
   const room = (await getRoom(db, businessId, lateDays ? { lateDays } : {})) as any;
   const f = room.agreed ?? room.forecast;
   const reason = room.shortage?.reason;
@@ -95,8 +106,9 @@ async function gatherFacts(db: Db, businessId: string, lateDays: number | null, 
     downside: room.downside ? { days: room.downside.days, minBalanceMinor: room.downside.minBalanceMinor, minBalanceWeek: room.downside.minBalanceWeek, firstNegativeWeek: room.downside.firstNegativeWeek } : null,
     doNothing: room.forecast ? { minBalanceMinor: room.forecast.minBalanceMinor, minBalanceWeek: room.forecast.minBalanceWeek } : null,
     ...(withLedger ? { ledger: await ledgerFacts(db, businessId) } : {}),
+    ...(insights ? { insights: await gatherInsights(db, businessId, insights.topic) } : {}),
     plans: planFacts, maxReplanRounds: MAX_REPLAN_ROUNDS, asOf: room.asOf, dataGaps: room.gaps ?? [], dataNotes: room.notes ?? [],
-    evidence: [{ label: "Your cash and its causes", href: "/room" }, ...(root ? [{ label: "The plans and their numbers", href: `/room/case?run=${root.id}` }] : []), { label: "Funding options", href: "/room/funding" }, ...(withLedger ? [{ label: "Invoices & bills", href: "/room/invoices" }] : []), { label: "The records", href: "/room/safety?tab=records" }],
+    evidence: [{ label: "Your cash and its causes", href: "/room" }, ...(root ? [{ label: "The plans and their numbers", href: `/room/case?run=${root.id}` }] : []), { label: "Funding options", href: "/room/funding" }, ...(insights ? [{ label: "Financial health and warnings", href: "/room#financial-health" }] : []), ...(withLedger ? [{ label: "Invoices & bills", href: "/room/invoices" }] : []), { label: "The records", href: "/room/safety?tab=records" }],
   };
 }
 
@@ -106,8 +118,8 @@ export async function askAboutCash(db: Db, businessId: string, input: unknown, o
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(actionRecords).where(and(eq(actionRecords.businessId, businessId), eq(actionRecords.event, ACTION_EVENTS.CASH_QUESTION_ASKED), gte(actionRecords.createdAt, since)));
   if (n >= askMaxPerHour()) return { ok: false, error: "You have asked a lot of questions in the last hour. Please try again a little later." };
 
-  const { intent, lateDays, weekAsked } = classifyQuestion(question);
-  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null, intent === "ledger");
+  const { intent, lateDays, weekAsked, topic } = classifyQuestion(question);
+  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null, intent === "ledger", intent === "insights" ? { topic } : null);
   // The answer is written by code from the facts. A model may only REWORD it (it sees the question and that draft, never the facts); the rewording is used
   // only if every figure in it is already in the draft and it claims no action. Anything else, or any failure, and the code-written answer is shown.
   const draft = ruleAnswer(intent, facts, lateDays, weekAsked);
