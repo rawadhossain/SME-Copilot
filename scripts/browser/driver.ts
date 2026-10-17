@@ -17,12 +17,16 @@ const CANDIDATES = [
 export const findBrowser = (): string | null => CANDIDATES.find((p) => p && existsSync(p)) ?? null;
 
 export class Page {
+  /** Console errors and uncaught exceptions seen on this page. */
+  consoleErrors: string[] = [];
   private id = 0;
   private pending = new Map<number, (d: { result?: unknown; error?: unknown }) => void>();
   constructor(private ws: WebSocket) {
     ws.onmessage = (m) => {
       const d = JSON.parse(String(m.data));
       if (d.id && this.pending.has(d.id)) { this.pending.get(d.id)!(d); this.pending.delete(d.id); }
+      else if (d.method === "Runtime.consoleAPICalled" && d.params?.type === "error") this.consoleErrors.push((d.params.args ?? []).map((a: { value?: unknown; description?: string }) => String(a.value ?? a.description ?? "")).join(" ").slice(0, 600));
+      else if (d.method === "Runtime.exceptionThrown") this.consoleErrors.push(String(d.params?.exceptionDetails?.exception?.description ?? d.params?.exceptionDetails?.text ?? "exception").slice(0, 600));
     };
   }
   send<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> { // eslint-disable-line @typescript-eslint/no-explicit-any

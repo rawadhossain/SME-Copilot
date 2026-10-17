@@ -133,6 +133,7 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
             {run.plans.map((p: any) => (
               <td key={p.id} className={`px-2 py-2 ${selected === p.id ? "bg-accent-soft/50" : ""}`}>
                 <ul className="space-y-1">{p.plan.levers.map((l: any, i: number) => <li key={i}>{leverText(l, nameOf(names, l.counterpartyId))}</li>)}</ul>
+                {p.plan.fromSimulation && <p className="mt-1 text-xs font-medium text-caution">From your &ldquo;{p.plan.fromSimulation.scenario}&rdquo; simulation (hypothetical). Figures here are recomputed on your real books. Not signed.</p>}
                 {Object.entries(p.plan.ownerNotes ?? {}).map(([id, t]) => <p key={id} className="mt-1 text-xs text-ink-soft">Your note for {nameOf(names, id)}: {String(t)}</p>)}
               </td>
             ))}</tr>
@@ -168,7 +169,7 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
       </div>
       {run.plans.map((p: any, i: number) => selected === p.id && (
         <div key={p.id} className="mt-4 rounded-xl border border-line bg-white/60 p-4 text-sm">
-          <p className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-soft">Assistant&apos;s explanation of plan {i + 1} <Chip tone="neutral">{p.plan.source === "owner" ? "adjusted by you; every number is recomputed by the engine" : `written by the ${p.plan.source === "ai" ? "AI" : "planner"}; numbers are not taken from it`}</Chip></p>
+          <p className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-soft">Assistant&apos;s explanation of plan {i + 1} <Chip tone="neutral">{p.plan.fromSimulation ? `from your "${p.plan.fromSimulation.scenario}" simulation (hypothetical); every figure was recomputed on your real books and nothing is signed` : p.plan.source === "owner" ? "adjusted by you; every number is recomputed by the engine" : `written by the ${p.plan.source === "ai" ? "AI" : "planner"}; numbers are not taken from it`}</Chip></p>
           {!p.plan.strategy && <p className="text-ink-soft">{p.plan.rationale}</p>}
           {p.plan.strategy && <StrategyNotes s={p.plan.strategy} />}
           <details className="mt-2"><summary className="cursor-pointer text-xs text-accent">Assumptions</summary><ul className="mt-1 list-disc pl-5 text-xs text-ink-soft">{(p.plan.assumptions ?? []).map((a: string, k: number) => <li key={k}>{a}</li>)}</ul></details>

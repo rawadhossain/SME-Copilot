@@ -79,6 +79,8 @@ export interface PlanView {
   source: "ai" | "deterministic" | "owner";
   /** Set when the owner adjusted the levers of another plan (Batch 13); that plan's id. */
   editedFrom?: string;
+  /** Set when the plan was handed over from a flight simulation (hypothetical) into Plans. The figures on the card are recomputed on the real books; this only says where the terms came from. */
+  fromSimulation?: { simulationId: string; scenario: string; simulatedLowestMinor: string };
   /** The owner's own plain-text notes per counterparty id (Batch 13). Kept with the plan and the log; NOT part of the signed terms and not sent. */
   ownerNotes?: Record<string, string>;
   /** True when contingencies of the base plan could not be carried over to the edited terms. */
