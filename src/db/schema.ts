@@ -30,6 +30,8 @@ export const businesses = pgTable("businesses", {
   // Owner setting: the cash level the owner wants to stay above (ADR-008). Same currency as base_currency.
   reserveMinor: minor("reserve_minor").notNull().default(sql`0`),
   reserveCurrency: text("reserve_currency").notNull().references(() => currencies.code),
+  // When the owner says the business started trading (their own statement, not verified). Used only for the history requirement in financing matching.
+  tradingSince: date("trading_since"),
   createdAt: createdAt(),
 });
 
@@ -682,4 +684,36 @@ export const recoveryCases = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("recovery_cases_fingerprint_idx").on(t.businessId, t.fingerprint), index("recovery_cases_business_idx").on(t.businessId, t.createdAt)],
+);
+
+// ALERTS: raised by the deterministic monitor (src/actions/monitor.ts) from the existing detectors. One OPEN or ACKNOWLEDGED alert per situation
+// (dedupe_key = kind + subject, never the amounts); a resolved alert is kept. Title and detail are templates over `figures`; no model writes them.
+// The app role may insert and update the monitor's own columns only; rows are never deleted.
+export const alerts = pgTable(
+  "alerts",
+  {
+    id: id(),
+    businessId: businessId(),
+    kind: text("kind").notNull(),
+    severity: text("severity").notNull(), // urgent | watch | info
+    dedupeKey: text("dedupe_key").notNull(),
+    title: text("title").notNull(),
+    detail: text("detail").notNull(),
+    figures: jsonb("figures").notNull().default(sql`'{}'::jsonb`),
+    refs: jsonb("refs").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("open"), // open | acknowledged | resolved
+    firstSeenAsOf: date("first_seen_as_of").notNull(),
+    lastSeenAsOf: date("last_seen_as_of").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    acknowledgedBy: text("acknowledged_by"),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("alerts_business_idx").on(t.businessId, t.status),
+    uniqueIndex("alerts_open_dedupe_idx").on(t.businessId, t.dedupeKey).where(sql`${t.status} <> 'resolved'`),
+    check("alerts_severity_chk", sql`${t.severity} in ('urgent', 'watch', 'info')`),
+    check("alerts_status_chk", sql`${t.status} in ('open', 'acknowledged', 'resolved')`),
+  ],
 );

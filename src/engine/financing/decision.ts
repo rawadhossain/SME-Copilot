@@ -99,7 +99,17 @@ function rankAlternatives(need: FundingNeed, alts: AlternativeInput[]): Alternat
 
 // ------------------------------------------------------------------------------------------------------------------ candidates
 
-export type CandidateSource = "owner_entered_offer" | "sandbox_invoice_finance";
+export type CandidateSource = "owner_entered_offer" | "sandbox_invoice_finance" | "catalogue";
+
+/** What the synthetic lender catalogue says about a product: shown beside a candidate (never a quote). */
+export interface CatalogueInfo {
+  productId: string;
+  verdict: "eligible" | "near_miss" | "not_eligible";
+  reason: string;
+  coversNeed: boolean | null;
+  criteria: { label: string; op: "min" | "max"; unit: "months" | "count" | "bps" | "money"; required: bigint; actual: bigint | null; status: "met" | "not_met" | "not_applicable"; note: string | null }[];
+  notice: string;
+}
 export type Affordability = "affordable" | "affordable_with_caution" | "partly_covers" | "not_affordable";
 
 /** What the engine knows about one way of borrowing, before it is judged. Offers entered by the owner and the sandbox lender both become this. */
@@ -128,6 +138,10 @@ export interface RawCandidate {
   restrictions: string[];
   /** How the owner can proceed, decided by the caller from what the application really supports. */
   route: { kind: "rescue_plan" | "none"; note: string };
+  /** Set only on candidates that come from, or are described by, the synthetic lender catalogue. */
+  catalogue?: CatalogueInfo;
+  /** True for catalogue offers: indicative terms, not a quote. */
+  indicative?: true;
 }
 
 export interface FundingCandidate extends RawCandidate {

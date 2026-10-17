@@ -1,8 +1,9 @@
 // Deterministic synthetic company seed. SYNTHETIC DATA ONLY. Refuses to run against a non-local database.
 //   bun run db:seed         seed if not already seeded (idempotent)
 //   bun run db:reset-seed   delete the seeded business, then seed again
-// The data depends only on the fixed PRNG seed and the "as of" date (today in local time, or SEED_AS_OF=YYYY-MM-DD).
+// The data depends only on the fixed PRNG seed and the "as of" date (DEFAULT_DEMO_AS_OF = 2026-10-15 from src/lib/clock.ts, or SEED_AS_OF=YYYY-MM-DD). Not the wall clock.
 import { createHash } from "node:crypto";
+import { DEFAULT_DEMO_AS_OF } from "../src/lib/clock";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
@@ -73,9 +74,8 @@ const addDays = (iso: string, n: number) => new Date(toMs(iso) + n * MS_DAY).toI
 const dayDiff = (a: string, b: string) => Math.round((toMs(b) - toMs(a)) / MS_DAY);
 const dom = (iso: string) => Number(iso.slice(8, 10));
 const dow = (iso: string) => new Date(toMs(iso)).getUTCDay();
-const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-const ANCHOR = process.env.SEED_AS_OF ?? todayLocal();
+const ANCHOR = process.env.SEED_AS_OF ?? DEFAULT_DEMO_AS_OF;
 if (!/^\d{4}-\d{2}-\d{2}$/.test(ANCHOR)) throw new Error("SEED_AS_OF must be YYYY-MM-DD");
 const START = addDays(ANCHOR, -182); // about 6 months
 
@@ -335,7 +335,9 @@ async function main() {
     await db.transaction(async (tx) => {
       await tx.insert(schema.businesses).values({ id: businessId, name: BUSINESS_NAME, baseCurrency: CURRENCY, isSynthetic: true,
         // Owner reserve setting: one fortnightly payroll (ADR-008).
-        reserveMinor: RESERVE, reserveCurrency: CURRENCY });
+        reserveMinor: RESERVE, reserveCurrency: CURRENCY,
+        // Declared by the owner (not verified): the demo company has traded since 2021-03-01 although the bank statement window is about six months.
+        tradingSince: "2021-03-01" });
       await tx.insert(schema.financialAccounts).values({
         id: accountId, businessId, name: "Current account (SYNTHETIC)", currency: CURRENCY,
         balanceMinor: TARGET_BALANCE, balanceAsOf: new Date(`${ANCHOR}T00:00:00Z`),

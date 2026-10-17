@@ -1,5 +1,6 @@
 import { db } from "@/db";
-import { badId, handle, readJson } from "@/actions/http";
+import { badId, readJson } from "@/actions/http";
+import { handleWatching } from "@/actions/http-watch";
 import { handoffStrategy } from "@/actions/flight-handoff";
 import { sessionFromRequest } from "@/auth";
 import { NextResponse } from "next/server";
@@ -15,5 +16,5 @@ export async function POST(req: Request, ctx: RouteContext<"/api/business/[id]/s
   if (session.user.role !== "owner") return NextResponse.json({ error: "Only the owner can add a strategy to Plans" }, { status: 403 });
   const body = await readJson(req);
   if (!body.ok) return body.res;
-  return handle(() => handoffStrategy(db, id, body.data));
+  return handleWatching(id, "simulation_handoff", () => handoffStrategy(db, id, body.data));
 }

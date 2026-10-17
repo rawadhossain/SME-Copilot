@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { badId, handle, readJson } from "@/actions/http";
+import { badId, readJson } from "@/actions/http";
+import { handleWatching } from "@/actions/http-watch";
 import { recordPayment } from "@/actions/ledger";
 import { ownerOrRefuse } from "@/auth/owner-only";
 import { kindOf } from "../../../kind";
@@ -16,5 +17,5 @@ export async function POST(req: Request, ctx: RouteContext<"/api/business/[id]/l
   if (who instanceof Response) return who;
   const body = await readJson(req);
   if (!body.ok) return body.res;
-  return handle(() => recordPayment(db, id, k, docId, body.data, who.name));
+  return handleWatching(id, "ledger_change", () => recordPayment(db, id, k, docId, body.data, who.name));
 }

@@ -5,10 +5,12 @@
 // record of what was assessed. Taking an option forward goes through the existing rescue plans: review, sign, run, independent check.
 import { LEVER_KINDS, type Lever } from "@/domain/plan";
 import { describeLever, dryRun, isRunnable, leverBounds, type AgentToolContext } from "@/agent";
-import { addDays, compareOffers, decideFunding, diffDays, fromOffer, searchPlans, simulateLevers, summarise, type AlternativeInput, type FundingDecision, type RawCandidate } from "@/engine";
+import { LENDER_CATALOGUE } from "@/domain/lender-catalogue";
+import { addDays, assessNeed, matchProducts, type CatalogueInfo, type MatchResult, compareOffers, decideFunding, diffDays, fromOffer, searchPlans, simulateLevers, summarise, type AlternativeInput, type FundingDecision, type RawCandidate } from "@/engine";
 import { formatMoney, money } from "@/lib/money";
 import { fundingBasis } from "./funding";
 import { listFundingOffers } from "./funding-store";
+import { loadBusinessProfile } from "./funding-profile";
 import { appendRecord } from "./log";
 import { sha256Hex } from "./plan-terms";
 import { toJsonValue } from "@/sandbox/proposals";
@@ -26,7 +28,13 @@ export interface FundingAssessment {
   basis: { includesAgreedTerms: boolean; savedOffers: number; signedFundingLimits: boolean; financeFeeBpsAssumed: number | null };
 }
 
-export async function assessFunding(db: Db, businessId: string): Promise<FundingAssessment> {
+const catalogueInfo = (r: MatchResult): CatalogueInfo => ({
+  productId: r.productId, verdict: r.verdict, reason: r.reason, coversNeed: r.coversNeed, notice: r.notice,
+  criteria: r.criteria.map((c) => ({ label: c.label, op: c.op, unit: c.unit, required: c.required, actual: c.actual, status: c.status, note: c.note })),
+});
+
+/** `catalogue: false` leaves the synthetic lender catalogue out entirely (used by the check to prove nothing else changes). */
+export async function assessFunding(db: Db, businessId: string, opts: { catalogue?: boolean } = {}): Promise<FundingAssessment> {
   const { ctx, events, agreed, limits, mandateValid } = await fundingBasis(db, businessId);
   const cur = ctx.currency;
   const m = (v: bigint) => formatMoney(money(v, cur), EXPONENTS[cur] ?? 2);
@@ -62,14 +70,40 @@ export async function assessFunding(db: Db, businessId: string): Promise<Funding
   const offers = saved.filter((o) => o.currency === cur);
   for (const o of saved.filter((x) => x.currency !== cur)) unavailable.push({ label: o.id, reason: `It is in ${o.currency} and your books are in ${cur}.` });
   const comparison = compareOffers(ctx.input, events, offers, { horizonWeeks: horizon, maxAnnualisedCostBps: limits.costBps, maxAmountMinor: limits.amountMinor });
-  const candidates: RawCandidate[] = offers.map((o, i) => {
-    const r = comparison.offers[i];
+  const toCandidate = (o: (typeof offers)[number], r: (typeof comparison.offers)[number]): RawCandidate => {
     const restrictions: string[] = [];
     if (r.withinAmountCap === false) restrictions.push(`The amount advanced (${m(o.principalMinor)}) is above the funding limit you signed (${m(limits.amountMinor as bigint)}).`);
     if (r.withinCostCap === false) restrictions.push(`Its estimated yearly cost ${(r.cost.annualisedCostBps / 100).toFixed(1)}% is above the limit you signed (${((limits.costBps as number) / 100).toFixed(1)}%).`);
     if (diffDays(ctx.asOf, o.disbursementDate) < 0) restrictions.push("The advance is dated before today, so it cannot fix a gap that is still ahead.");
     return fromOffer(o, r, restrictions, { kind: "none", note: NO_APPLY_NOTE });
-  });
+  };
+  const candidates: RawCandidate[] = offers.map((o, i) => toCandidate(o, comparison.offers[i]));
+
+  // 2b. Products of the synthetic lender catalogue the business is ELIGIBLE for and that the app cannot apply for, sized to the need and judged like any
+  // other candidate. Only when there is a gap. Invoice finance is NOT added here: it already enters below through the sandbox lever, so adding the
+  // catalogue product too would count the same receivables twice; its catalogue verdict is attached to that option instead.
+  let invoiceFinanceCatalogue: CatalogueInfo | null = null;
+  if (opts.catalogue !== false) {
+    const gap = assessNeed(comparison.doNotBorrow, ctx.input.reserve, horizon);
+    const match = matchProducts(await loadBusinessProfile(db, businessId, ctx, events), LENDER_CATALOGUE, gap.needed ? gap.peakShortfallMinor : null);
+    const ifin = match.results.find((r) => r.kind === "invoice_finance");
+    if (ifin) invoiceFinanceCatalogue = catalogueInfo(ifin);
+    if (gap.needed) {
+      const taken = new Set(offers.map((o) => o.id));
+      const picks = match.results.filter((r) => r.verdict === "eligible" && !r.executable && r.kind !== "invoice_finance" && r.offer !== null && !taken.has(r.offer.id));
+      const catOffers = picks.map((r) => r.offer!);
+      if (catOffers.length > 0) {
+        const catCmp = compareOffers(ctx.input, events, catOffers, { horizonWeeks: horizon, maxAnnualisedCostBps: limits.costBps, maxAmountMinor: limits.amountMinor });
+        picks.forEach((p, i) => {
+          const c = toCandidate(catOffers[i], catCmp.offers[i]);
+          candidates.push({
+            ...c, source: "catalogue", label: p.label, termsAssumed: true, indicative: true, catalogue: catalogueInfo(p),
+            route: { kind: "none", note: "Indicative terms from a synthetic catalogue, not a quote. The app cannot apply for this; use 'Add to comparison' to compare it beside a real offer." },
+          });
+        });
+      }
+    }
+  }
 
   // 3. The sandbox lender's invoice finance: a rescue-plan lever, so it can go through review, signing and execution. Fee is the planning assumption.
   let financeFeeBps: number | null = null;
@@ -96,6 +130,7 @@ export async function assessFunding(db: Db, businessId: string): Promise<Funding
         annualisedCostBps: advance > 0n && days > 0 ? Number((fee * 365n * 10000n * 2n + advance * BigInt(days)) / (advance * BigInt(days) * 2n)) : null,
         firstRepaymentDate: receipt.date, lastRepaymentDate: receipt.date, repaymentCount: 1,
         summary: summarise(sim.forecast), dscr: null, stacking: null, repaymentsAfterWindowMinor: 0n, termsAssumed: true, restrictions: [],
+        ...(invoiceFinanceCatalogue ? { catalogue: invoiceFinanceCatalogue } : {}),
         route: { kind: "rescue_plan", note: `Shown as a rescue plan to review. ${gate.decision === "needs_approval" ? "The permission gate asks for your approval. " : ""}The fee is a planning assumption (${(financeFeeBps / 100).toFixed(1)}% of the invoice); the sandbox lender sets the real terms when it answers, and nothing is sent until you sign.` },
       });
     }
@@ -111,4 +146,11 @@ export async function assessFunding(db: Db, businessId: string): Promise<Funding
     },
   });
   return { decision, basis: { includesAgreedTerms: agreed, savedOffers: saved.length, signedFundingLimits: mandateValid && (limits.costBps !== null || limits.amountMinor !== null), financeFeeBpsAssumed: financeFeeBps } };
+}
+
+/** The funding need exactly as assessFunding measures it: the same books, confirmed commitments and agreed terms, the same horizon and reserve, "do not borrow" as the baseline. */
+export async function currentFundingNeed(db: Db, businessId: string) {
+  const { ctx, events } = await fundingBasis(db, businessId);
+  const baseline = compareOffers(ctx.input, events, [], { horizonWeeks: PLANNING_HORIZON_WEEKS }).doNotBorrow;
+  return { ctx, events, need: assessNeed(baseline, ctx.input.reserve, PLANNING_HORIZON_WEEKS) };
 }

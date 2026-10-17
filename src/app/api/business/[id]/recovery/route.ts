@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { businesses } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { badId, handle } from "@/actions/http";
+import { handleWatching } from "@/actions/http-watch";
 import { listRecoveryCases, previewRecovery, runRecovery } from "@/actions/recovery";
 
 // Cash-flow recovery. GET looks (what would be detected now, and the cases so far) and writes nothing. POST detects and, for a situation that has no
@@ -18,5 +19,5 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/business/[id]/
   if (bad) return bad;
   const [biz] = await db.select({ id: businesses.id }).from(businesses).where(eq(businesses.id, id));
   if (!biz) return NextResponse.json({ error: "Business not found" }, { status: 404 });
-  return handle(() => runRecovery(db, id).then(({ report, ...rest }) => ({ ...rest, report })));
+  return handleWatching(id, "recovery", () => runRecovery(db, id).then(({ report, ...rest }) => ({ ...rest, report })));
 }

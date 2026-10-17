@@ -3,7 +3,7 @@
 // append-only log of every other business are never touched. Owner-side code: it signs the clone's mandate with the dev owner key.
 import { and, eq } from "drizzle-orm";
 import { appendActionRecord, ACTION_EVENTS } from "@/actionlog";
-import { businesses, counterparties, financialAccounts, bills, invoices, mandates, recurringCommitments, sandboxBankAccounts, sandboxPayees } from "@/db/schema";
+import { businesses, counterparties, financialAccounts, bills, invoices, mandates, recurringCommitments, sandboxBankAccounts, sandboxPayees, transactions } from "@/db/schema";
 import { signMandate } from "@/gate/owner-signing";
 import type { MandateWire } from "@/gate/mandate";
 import type { Db } from "./types";
@@ -13,14 +13,21 @@ export async function createDemoClone(db: Db, sourceBusinessId: string): Promise
   if (!src) throw new Error("Source business not found");
   const n = (await db.select({ id: businesses.id }).from(businesses).where(eq(businesses.isTest, true))).length + 1;
   const name = `Mercer & Vale demo run ${n} (SYNTHETIC)`;
-  const [biz] = await db.insert(businesses).values({ name, baseCurrency: src.baseCurrency, reserveMinor: src.reserveMinor, reserveCurrency: src.reserveCurrency, isSynthetic: true, isTest: true }).returning();
+  const [biz] = await db.insert(businesses).values({ name, baseCurrency: src.baseCurrency, reserveMinor: src.reserveMinor, reserveCurrency: src.reserveCurrency, isSynthetic: true, isTest: true, tradingSince: src.tradingSince }).returning();
   const omit = <T extends { id: string; businessId: string }>(r: T) => { const { id: _i, businessId: _b, ...rest } = r; void _i; void _b; return rest; };
-  for (const a of await db.select().from(financialAccounts).where(eq(financialAccounts.businessId, src.id))) await db.insert(financialAccounts).values({ ...omit(a), businessId: biz.id });
+  const accountMap = new Map<string, string>();
+  for (const a of await db.select().from(financialAccounts).where(eq(financialAccounts.businessId, src.id))) {
+    const [x] = await db.insert(financialAccounts).values({ ...omit(a), businessId: biz.id }).returning();
+    accountMap.set(a.id, x.id);
+  }
   const idMap = new Map<string, string>();
   for (const c of await db.select().from(counterparties).where(eq(counterparties.businessId, src.id))) {
     const [x] = await db.insert(counterparties).values({ ...omit(c), businessId: biz.id }).returning();
     idMap.set(c.id, x.id);
   }
+  // The bank history too (new ids, same dates, amounts, descriptions and links), so matching, insights and funding see a trading business.
+  const history = (await db.select().from(transactions).where(eq(transactions.businessId, src.id))).map((t) => ({ ...omit(t), businessId: biz.id, accountId: accountMap.get(t.accountId)!, counterpartyId: t.counterpartyId ? idMap.get(t.counterpartyId) ?? null : null }));
+  for (let i = 0; i < history.length; i += 200) await db.insert(transactions).values(history.slice(i, i + 200));
   for (const i of await db.select().from(invoices).where(eq(invoices.businessId, src.id))) await db.insert(invoices).values({ ...omit(i), businessId: biz.id, customerId: idMap.get(i.customerId)! });
   for (const b of await db.select().from(bills).where(eq(bills.businessId, src.id))) await db.insert(bills).values({ ...omit(b), businessId: biz.id, supplierId: idMap.get(b.supplierId)! });
   for (const c of await db.select().from(recurringCommitments).where(eq(recurringCommitments.businessId, src.id))) await db.insert(recurringCommitments).values({ ...omit(c), businessId: biz.id });

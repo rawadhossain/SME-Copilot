@@ -7,6 +7,7 @@ import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 import { AskCash, CashPicture, weekWithDates } from "@/ui/rescue";
 import { FinancialHealth } from "@/ui/insights";
+import { AlertsPanel } from "@/ui/alerts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function CashDesk() {
@@ -62,6 +63,8 @@ export default function CashDesk() {
         <Btn variant="secondary" busy={busy} onClick={check}>Re-check my cash</Btn>
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
+
+      <AlertsPanel />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="In the bank today" value={money(room.balances.sandboxBankMinor, cur)} sub="practice bank, no real money" />

@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Btn } from "./kit";
+import { useAlerts } from "./alerts";
 import { call, useSession } from "./session";
 
 interface Step { n: number; text: string; href: string; cta: string }
@@ -12,6 +13,7 @@ export function NextStep() {
   const path = usePathname();
   const biz = session?.business.id;
   const [step, setStep] = useState<Step | null>(null);
+  const { alerts } = useAlerts();
 
   useEffect(() => {
     if (!biz || path !== "/room") return;
@@ -41,6 +43,10 @@ export function NextStep() {
   }, [biz, path, session?.user.role]);
 
   if (!step || path !== "/room" || path === step.href.split("?")[0]) return null; // shown on Today only: other screens stay quiet
+  // The alerts panel already says "cash will run short" with the figures: it wins, and this bar does not repeat it.
+  if (step.n === 3 && step.text.startsWith("Cash will run short") && alerts.some((a) => a.kind === "cash_below_cushion" && a.status === "open")) return null;
+  // "Done, the plan ran" would contradict an open alert saying the plan is going off track: the alert wins.
+  if (step.n === 6 && alerts.some((a) => a.kind === "strategy_off_track" && a.status === "open")) return null;
   return (
     <div role="status" className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 bg-accent-soft/50 px-4 py-3">
       <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-sm font-semibold text-white" aria-hidden>{step.n}</span>
