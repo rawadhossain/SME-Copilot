@@ -1,7 +1,8 @@
 // Thin database loader: reads a business from Postgres and builds the plain EngineInput. Not part of the pure core.
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { db as appDb } from "@/db";
-import { bills, businesses, counterparties, financialAccounts, invoices, recurringCommitments } from "@/db/schema";
+import { bills, businesses, counterparties, documentPayments, extractions, financialAccounts, invoices, recurringCommitments, sandboxPayments, sandboxReceipts } from "@/db/schema";
+import { balanceOf, type PaymentLite } from "@/domain/ledger";
 import { DEFAULT_OVERDUE, type BillRecord, type CommitmentRecord, type EngineInput, type Frequency, type InvoiceRecord, type OverdueAssumption } from "./types";
 
 type Db = typeof appDb;
@@ -22,6 +23,28 @@ export function overdueFromEnv(env: Record<string, string | undefined> = process
   };
 }
 
+/**
+ * A "counted elsewhere" marker only protects against double counting while the thing it points at still exists. If the confirmed order was
+ * replaced, the commitment deleted or the scheduled payment cancelled, the document is counted again rather than silently dropped.
+ */
+export async function liveCountedRefs(db: Db, businessId: string, refs: string[]): Promise<Set<string>> {
+  const live = new Set<string>();
+  const ids = (prefix: string) => [...new Set(refs.filter((r) => r.startsWith(prefix)).map((r) => r.split(":")[1]))].filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+  const orderIds = ids("order:");
+  if (orderIds.length > 0) for (const r of await db.select({ id: extractions.id }).from(extractions).where(and(eq(extractions.businessId, businessId), inArray(extractions.id, orderIds), eq(extractions.status, "confirmed")))) live.add(`order:${r.id}`);
+  const recIds = ids("recurring:");
+  if (recIds.length > 0) for (const r of await db.select({ id: recurringCommitments.id }).from(recurringCommitments).where(and(eq(recurringCommitments.businessId, businessId), inArray(recurringCommitments.id, recIds)))) live.add(`recurring:${r.id}`);
+  const schIds = ids("scheduled:");
+  if (schIds.length > 0) {
+    for (const r of await db.select({ id: sandboxPayments.id }).from(sandboxPayments).where(and(eq(sandboxPayments.businessId, businessId), inArray(sandboxPayments.id, schIds), inArray(sandboxPayments.status, ["scheduled", "executed"])))) live.add(`scheduled:${r.id}`);
+    for (const r of await db.select({ id: sandboxReceipts.id }).from(sandboxReceipts).where(and(eq(sandboxReceipts.businessId, businessId), inArray(sandboxReceipts.id, schIds), inArray(sandboxReceipts.status, ["scheduled", "received"])))) live.add(`scheduled:${r.id}`);
+  }
+  return live;
+}
+
+/** The marker only counts when its target is alive: refs look like "order:<id>[:detail]". */
+export const isLiveRef = (live: Set<string>, ref: string): boolean => live.has(ref.split(":").slice(0, 2).join(":"));
+
 export async function loadEngineInput(db: Db, businessId: string, asOfOverride?: string, horizonWeeks?: number): Promise<EngineInput | null> {
   const [biz] = await db.select().from(businesses).where(eq(businesses.id, businessId));
   if (!biz) return null;
@@ -38,31 +61,53 @@ export async function loadEngineInput(db: Db, businessId: string, asOfOverride?:
 
   const invRows = await db
     .select({
-      id: invoices.id, number: invoices.number, cpId: invoices.customerId, cpName: counterparties.name,
+      id: invoices.id, number: invoices.number, cpId: invoices.customerId, cpName: counterparties.name, countedIn: invoices.countedIn,
       issuedOn: invoices.issuedOn, dueOn: invoices.dueOn, amount: invoices.amountMinor, status: invoices.status, paidOn: invoices.paidOn,
     })
     .from(invoices)
     .innerJoin(counterparties, eq(counterparties.id, invoices.customerId))
     .where(and(eq(invoices.businessId, businessId), eq(invoices.currency, biz.baseCurrency), ne(invoices.status, "void"), ne(invoices.status, "draft")))
     .orderBy(invoices.issuedOn, invoices.number);
-  const invoiceRecords: InvoiceRecord[] = invRows.map((r) => ({
-    id: r.id, number: r.number, counterpartyId: r.cpId, counterpartyName: r.cpName, issuedOn: r.issuedOn, dueOn: r.dueOn,
-    amount: r.amount, status: r.status === "paid" ? "paid" : "open", ...(r.paidOn ? { paidOn: r.paidOn } : {}),
-  }));
-
   const billRows = await db
     .select({
-      id: bills.id, reference: bills.reference, cpId: bills.supplierId, cpName: counterparties.name,
+      id: bills.id, reference: bills.reference, cpId: bills.supplierId, cpName: counterparties.name, countedIn: bills.countedIn,
       issuedOn: bills.issuedOn, dueOn: bills.dueOn, amount: bills.amountMinor, status: bills.status, paidOn: bills.paidOn,
     })
     .from(bills)
     .innerJoin(counterparties, eq(counterparties.id, bills.supplierId))
     .where(and(eq(bills.businessId, businessId), eq(bills.currency, biz.baseCurrency), ne(bills.status, "void")))
     .orderBy(bills.issuedOn, bills.reference);
-  const billRecords: BillRecord[] = billRows.map((r) => ({
-    id: r.id, reference: r.reference, counterpartyId: r.cpId, counterpartyName: r.cpName, issuedOn: r.issuedOn, dueOn: r.dueOn,
-    amount: r.amount, status: r.status === "paid" ? "paid" : "open", ...(r.paidOn ? { paidOn: r.paidOn } : {}),
-  }));
+
+  // Payments recorded against invoices and bills. Only payments already in the opening balance (dated on or before asOf) reduce what the forecast waits for.
+  const payRows = await db
+    .select({ invoiceId: documentPayments.invoiceId, billId: documentPayments.billId, id: documentPayments.id, amount: documentPayments.amountMinor, paidOn: documentPayments.paidOn, voidedAt: documentPayments.voidedAt })
+    .from(documentPayments)
+    .where(eq(documentPayments.businessId, businessId));
+  const paymentsOf = new Map<string, PaymentLite[]>();
+  for (const p of payRows) {
+    const key = (p.invoiceId ?? p.billId)!;
+    paymentsOf.set(key, [...(paymentsOf.get(key) ?? []), { id: p.id, amountMinor: p.amount, paidOn: p.paidOn, voided: p.voidedAt !== null }]);
+  }
+  const liveRefs = await liveCountedRefs(db, businessId, [...invRows, ...billRows].flatMap((r) => (r.countedIn ? [r.countedIn] : [])));
+  const invoiceRecords: InvoiceRecord[] = invRows.map((r) => {
+    const b = balanceOf({ amountMinor: r.amount, status: r.status, paidOn: r.paidOn }, paymentsOf.get(r.id) ?? [], asOf);
+    const paid = b.outstandingAtAsOfMinor === 0n;
+    return {
+      id: r.id, number: r.number, counterpartyId: r.cpId, counterpartyName: r.cpName, issuedOn: r.issuedOn, dueOn: r.dueOn,
+      amount: r.amount, status: paid ? "paid" : "open", ...(paid && b.lastPaidOn ? { paidOn: b.lastPaidOn } : {}),
+      ...(!paid && b.paidByAsOfMinor > 0n ? { outstanding: b.outstandingAtAsOfMinor } : {}), ...(r.countedIn && isLiveRef(liveRefs, r.countedIn) ? { countedIn: r.countedIn } : {}),
+    };
+  });
+
+  const billRecords: BillRecord[] = billRows.map((r) => {
+    const b = balanceOf({ amountMinor: r.amount, status: r.status, paidOn: r.paidOn }, paymentsOf.get(r.id) ?? [], asOf);
+    const paid = b.outstandingAtAsOfMinor === 0n;
+    return {
+      id: r.id, reference: r.reference, counterpartyId: r.cpId, counterpartyName: r.cpName, issuedOn: r.issuedOn, dueOn: r.dueOn,
+      amount: r.amount, status: paid ? "paid" : "open", ...(paid && b.lastPaidOn ? { paidOn: b.lastPaidOn } : {}),
+      ...(!paid && b.paidByAsOfMinor > 0n ? { outstanding: b.outstandingAtAsOfMinor } : {}), ...(r.countedIn && isLiveRef(liveRefs, r.countedIn) ? { countedIn: r.countedIn } : {}),
+    };
+  });
 
   const comRows = await db
     .select()

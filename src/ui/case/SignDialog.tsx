@@ -10,6 +10,7 @@ import { dateTime, money, short, week } from "../format";
 import { call, useSession } from "../session";
 import { LetterEditor } from "./LetterEditor";
 import { SignaturePad } from "./SignaturePad";
+import { ScheduleReview } from "./ScheduleReview";
 
 const STEPS = ["Review the terms", "Write the proposals", "Sign"] as const;
 
@@ -108,6 +109,7 @@ export function SignDialog({ open, onClose, runId, planId, onSigned, plan = null
                 <ul className="space-y-2">{s.asks.map((a: any, i: number) => (
                   <li key={i} className="rounded-lg border border-line bg-white/70 p-3"><p><b>{a.counterparty}</b>: {a.text}</p><p className="text-xs text-ink-soft">It will accept: {a.accepts}</p></li>))}</ul>
               </section>
+              <ScheduleReview summary={s} cur={cur} />
               <section><h3 className="mb-1 font-medium">Then</h3><ul className="list-disc space-y-1 pl-5 text-ink-soft">{s.then.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></section>
               <section><h3 className="mb-1 font-medium text-danger">It will never</h3><ul className="list-disc space-y-1 pl-5 text-ink-soft">{s.never.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></section>
             </>

@@ -17,7 +17,11 @@ export interface InvoiceRecord {
   counterpartyName: string;
   issuedOn: string;
   dueOn: string;
-  amount: bigint; // positive: money owed to us
+  amount: bigint; // positive: money owed to us (the face value of the invoice)
+  /** What is still to collect, after payments that the opening balance already contains. Absent means the whole amount. */
+  outstanding?: bigint;
+  /** Already counted elsewhere in the forecast ("order:pc1"): kept for tracking, never forecast a second time. */
+  countedIn?: string;
   status: "open" | "paid";
   paidOn?: string; // set when status is paid and the date is known
 }
@@ -29,7 +33,11 @@ export interface BillRecord {
   counterpartyName: string;
   issuedOn: string;
   dueOn: string;
-  amount: bigint; // positive: money we owe
+  amount: bigint; // positive: money we owe (the face value of the bill)
+  /** What is still to pay, after payments that the opening balance already contains. Absent means the whole amount. */
+  outstanding?: bigint;
+  /** Already counted elsewhere in the forecast: kept for tracking, never forecast a second time. */
+  countedIn?: string;
   status: "open" | "paid";
   paidOn?: string;
 }

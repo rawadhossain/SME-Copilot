@@ -50,7 +50,7 @@ function groupBy<T>(rows: T[], key: (r: T) => string): [string, T[]][] {
   return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 }
 
-function commitmentDates(c: CommitmentRecord, asOf: string, end: string): string[] {
+export function commitmentDates(c: CommitmentRecord, asOf: string, end: string): string[] {
   const step = (d: string, n: number): string => {
     switch (c.frequency) {
       case "weekly": return addDays(d, 7);
@@ -87,13 +87,15 @@ export function buildForecast(input: EngineInput, options: ForecastOptions = {})
 
   // 1. Open customer invoices: due date shifted by the counterparty's typical lateness.
   for (const inv of input.invoices) {
-    if (inv.status !== "open") continue;
+    if (inv.status !== "open" || inv.countedIn) continue; // counted elsewhere (an order, a recurring commitment): tracked, not forecast twice
+    if (inv.outstanding !== undefined && inv.outstanding <= 0n) continue;
     const stat = lateness.get(inv.counterpartyId);
     const shift = shiftFor(inv.counterpartyId);
     let date = addDays(inv.dueOn, shift);
-    let amount = inv.amount;
+    let amount = inv.outstanding ?? inv.amount; // only the unpaid balance is still to come
     let kind: ForecastItem["kind"] = "confirmed";
     const notes: string[] = [`Due ${inv.dueOn}.`];
+    if (inv.outstanding !== undefined && inv.outstanding < inv.amount) notes.push("Partly paid; only the unpaid balance is forecast.");
     if (shift > 0 && stat) notes.push(`${inv.counterpartyName} typically pays ${shift} days late (median of ${stat.paidCount} paid invoices); shifted to ${date}.`);
     const overdueBy = inv.dueOn < asOf ? diffDays(inv.dueOn, asOf) : 0;
     if (overdueBy > 0) {
@@ -132,12 +134,13 @@ export function buildForecast(input: EngineInput, options: ForecastOptions = {})
 
   // 2. Open supplier bills on their due date (overdue bills are assumed paid at the start).
   for (const bill of input.bills) {
-    if (bill.status !== "open") continue;
+    if (bill.status !== "open" || bill.countedIn) continue;
+    if (bill.outstanding !== undefined && bill.outstanding <= 0n) continue;
     const date = bill.dueOn < asOf ? asOf : bill.dueOn;
     items.push({
-      date, amount: -bill.amount, sourceType: "bill", sourceId: bill.id, counterpartyId: bill.counterpartyId, kind: "confirmed",
+      date, amount: -(bill.outstanding ?? bill.amount), sourceType: "bill", sourceId: bill.id, counterpartyId: bill.counterpartyId, kind: "confirmed",
       label: `Bill ${bill.reference} to ${bill.counterpartyName}`,
-      note: bill.dueOn < asOf ? `Due ${bill.dueOn}, already overdue; assumed paid at the start of the forecast.` : `Due ${bill.dueOn}.`,
+      note: (bill.dueOn < asOf ? `Due ${bill.dueOn}, already overdue; assumed paid at the start of the forecast.` : `Due ${bill.dueOn}.`) + (bill.outstanding !== undefined && bill.outstanding < bill.amount ? " Partly paid; only the unpaid balance is forecast." : ""),
     });
   }
 

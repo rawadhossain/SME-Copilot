@@ -58,6 +58,11 @@ export const ACTION_EVENTS = {
   DEMO_CLONE_CREATED: "demo.clone_created",
   EVIDENCE_EXPORTED: "evidence.exported",
   FUNDING_OFFERS_SAVED: "funding.offers_saved",
+  LEDGER_DOCUMENT_CREATED: "ledger.document_created",
+  LEDGER_DOCUMENT_UPDATED: "ledger.document_updated",
+  LEDGER_DOCUMENT_VOIDED: "ledger.document_voided",
+  LEDGER_PAYMENT_RECORDED: "ledger.payment_recorded",
+  LEDGER_PAYMENT_VOIDED: "ledger.payment_voided",
 } as const;
 
 export type ActionEvent = (typeof ACTION_EVENTS)[keyof typeof ACTION_EVENTS];

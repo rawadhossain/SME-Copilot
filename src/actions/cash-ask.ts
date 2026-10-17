@@ -6,12 +6,13 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { ASK_SUGGESTIONS, CASH_ASK_PURPOSE, askOutputSchema, buildAskMessages, checkProse, classifyQuestion, claimsIn, collectNumbers, detailLines, ruleAnswer, type AskFacts, type AskPlanFact } from "@/agent";
+import { ASK_SUGGESTIONS, CASH_ASK_PURPOSE, askOutputSchema, buildAskMessages, checkRewrite, classifyQuestion, detailLines, ruleAnswer, type AskFacts, type AskLedger, type AskPlanFact } from "@/agent";
 import { getGateway, type Gateway } from "@/ai";
 import { dbCallLogger } from "@/ai/db-logger";
 import { actionRecords, agentRuns, plans } from "@/db/schema";
 import type { Lever, PlanView } from "@/domain/plan";
 import { appendRecord } from "./log";
+import { getLedgerSummary } from "./ledger";
 import { getRoom } from "./room";
 import { ACTION_EVENTS, type Db } from "./types";
 
@@ -24,7 +25,7 @@ export const askMaxPerHour = (): number => {
 const MAX_REPLAN_ROUNDS = 2;
 
 export type AskResult =
-  | { ok: true; source: "model" | "rules"; intent: string; answer: string; unsupported: string | null; details: string[]; evidence: { label: string; href: string }[]; suggestions: string[] }
+  | { ok: true; source: "model" | "rules"; /** True when a model answer was produced but refused (an unsupported figure, or an unusable reply), so the rule-based answer was shown. */ modelRefused: boolean; /** Why (first problem, or the call error): for the live check and the log, not shown to the owner. */ modelNote: string | null; /** The code-written answer the wording is based on (shown only by the live check). */ draftAnswer: string; intent: string; answer: string; unsupported: string | null; details: string[]; evidence: { label: string; href: string }[]; suggestions: string[] }
   | { ok: false; error: string };
 
 const KIND_PHRASE: Record<string, string> = { customer_receipt: "a customer payment", supplier_deposit: "a supplier deposit", supplier_balance: "a supplier balance payment", cost: "a cost", financing: "a financing payment", other: "a payment" };
@@ -39,8 +40,23 @@ const askText = (l: Lever): string => {
   }
 };
 
+/** Totals and the few largest items from the books. Names and numbers are shown by code only; the model never sees them. */
+async function ledgerFacts(db: Db, businessId: string): Promise<AskLedger> {
+  const l = await getLedgerSummary(db, businessId);
+  type V = (typeof l.invoices)[number];
+  const totals = (s: typeof l.receivable) => ({ openCount: s.openCount, outstandingMinor: s.outstandingMinor.toString(), overdueCount: s.overdueCount, overdueMinor: s.overdueMinor.toString(), partlyPaidCount: s.partlyPaidCount, dueIn7Minor: s.dueIn7Minor.toString() });
+  const item = (v: V) => ({ number: v.number, counterparty: v.counterpartyName, outstandingMinor: v.outstandingMinor.toString(), dueOn: v.dueOn, overdueDays: v.overdueDays });
+  const open = (v: V) => v.outstandingMinor > 0n && !["void", "draft", "paid"].includes(v.state);
+  const big = (a: V, b: V) => (a.outstandingMinor < b.outstandingMinor ? 1 : a.outstandingMinor > b.outstandingMinor ? -1 : 0);
+  return {
+    receivable: totals(l.receivable), payable: totals(l.payable),
+    overdueInvoices: l.invoices.filter((v) => open(v) && v.overdueDays > 0).sort(big).slice(0, 3).map(item),
+    billsDueSoon: l.bills.filter(open).sort((a, b) => a.dueOn.localeCompare(b.dueOn)).slice(0, 3).map(item),
+  };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function gatherFacts(db: Db, businessId: string, lateDays: number | null): Promise<AskFacts> {
+async function gatherFacts(db: Db, businessId: string, lateDays: number | null, withLedger = false): Promise<AskFacts> {
   const room = (await getRoom(db, businessId, lateDays ? { lateDays } : {})) as any;
   const f = room.agreed ?? room.forecast;
   const reason = room.shortage?.reason;
@@ -78,8 +94,9 @@ async function gatherFacts(db: Db, businessId: string, lateDays: number | null):
     causes,
     downside: room.downside ? { days: room.downside.days, minBalanceMinor: room.downside.minBalanceMinor, minBalanceWeek: room.downside.minBalanceWeek, firstNegativeWeek: room.downside.firstNegativeWeek } : null,
     doNothing: room.forecast ? { minBalanceMinor: room.forecast.minBalanceMinor, minBalanceWeek: room.forecast.minBalanceWeek } : null,
-    plans: planFacts, maxReplanRounds: MAX_REPLAN_ROUNDS,
-    evidence: [{ label: "Your cash and its causes", href: "/room" }, ...(root ? [{ label: "The plans and their numbers", href: `/room/case?run=${root.id}` }] : []), { label: "Funding options", href: "/room/funding" }, { label: "The records", href: "/room/safety?tab=records" }],
+    ...(withLedger ? { ledger: await ledgerFacts(db, businessId) } : {}),
+    plans: planFacts, maxReplanRounds: MAX_REPLAN_ROUNDS, asOf: room.asOf, dataGaps: room.gaps ?? [], dataNotes: room.notes ?? [],
+    evidence: [{ label: "Your cash and its causes", href: "/room" }, ...(root ? [{ label: "The plans and their numbers", href: `/room/case?run=${root.id}` }] : []), { label: "Funding options", href: "/room/funding" }, ...(withLedger ? [{ label: "Invoices & bills", href: "/room/invoices" }] : []), { label: "The records", href: "/room/safety?tab=records" }],
   };
 }
 
@@ -89,28 +106,30 @@ export async function askAboutCash(db: Db, businessId: string, input: unknown, o
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(actionRecords).where(and(eq(actionRecords.businessId, businessId), eq(actionRecords.event, ACTION_EVENTS.CASH_QUESTION_ASKED), gte(actionRecords.createdAt, since)));
   if (n >= askMaxPerHour()) return { ok: false, error: "You have asked a lot of questions in the last hour. Please try again a little later." };
 
-  const { intent, lateDays } = classifyQuestion(question);
-  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null);
-  let out = ruleAnswer(intent, facts, lateDays);
+  const { intent, lateDays, weekAsked } = classifyQuestion(question);
+  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null, intent === "ledger");
+  // The answer is written by code from the facts. A model may only REWORD it (it sees the question and that draft, never the facts); the rewording is used
+  // only if every figure in it is already in the draft and it claims no action. Anything else, or any failure, and the code-written answer is shown.
+  const draft = ruleAnswer(intent, facts, lateDays, weekAsked);
+  let out = draft;
   let source: "model" | "rules" = "rules";
   let fellBack = false;
+  let modelNote: string | null = null;
   // Questions that ask for an action, or that no rule understands, are answered by code only: the model is not asked.
   if (intent !== "action" && intent !== "unknown" && !(intent === "late" && !lateDays)) {
     try {
       const gw = opts.gateway ?? getGateway();
-      const r = (await gw.generateStructured(askOutputSchema, buildAskMessages({ question, intent, facts }), { purposeId: CASH_ASK_PURPOSE, businessId, logger: dbCallLogger })).object;
-      const allowed = new Set<string>();
-      collectNumbers(facts, allowed);
-      for (const p of facts.plans) for (const a of p.asks) claimsIn(a).percentsBps.forEach((b) => allowed.add(b));
-      const checked = checkProse(r.answer, allowed);
-      if (checked.removed.length === 0 && r.answer.trim().length > 0) { out = r; source = "model"; } else fellBack = true;
-    } catch {
+      const r = (await gw.generateStructured(askOutputSchema, buildAskMessages({ question, intent, draft: draft.answer }), { purposeId: CASH_ASK_PURPOSE, businessId, logger: dbCallLogger })).object;
+      const checked = checkRewrite(r.answer, draft.answer);
+      if (checked.ok) { out = { answer: r.answer, unsupported: draft.unsupported }; source = "model"; } else { fellBack = true; modelNote = checked.problems.join("; "); }
+    } catch (e) {
       fellBack = true;
+      modelNote = `model call failed: ${e instanceof Error ? e.message.slice(0, 160) : "error"}`;
     }
   }
   await appendRecord(db, {
     businessId, event: ACTION_EVENTS.CASH_QUESTION_ASKED, actor: "owner",
-    detail: { intent, source, fellBack, questionSha256: createHash("sha256").update(question, "utf8").digest("hex"), questionLength: question.length },
+    detail: { intent, source, fellBack, modelNote: modelNote ? modelNote.replace(/[0-9]/g, "#").slice(0, 160) : null, questionSha256: createHash("sha256").update(question, "utf8").digest("hex"), questionLength: question.length },
   });
-  return { ok: true, source, intent, answer: out.answer, unsupported: out.unsupported, details: detailLines(intent, facts, lateDays), evidence: facts.evidence, suggestions: ASK_SUGGESTIONS };
+  return { ok: true, source, modelRefused: fellBack, modelNote, draftAnswer: draft.answer, intent, answer: out.answer, unsupported: out.unsupported, details: detailLines(intent, facts, lateDays), evidence: facts.evidence, suggestions: ASK_SUGGESTIONS };
 }

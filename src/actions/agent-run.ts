@@ -68,7 +68,7 @@ export interface RunSummary {
 }
 
 /** Newest confirmed extraction per distinct document, as read-only events with stable refs. */
-async function loadPending(db: Db, businessId: string, mustInclude: string | null): Promise<PendingEvent[]> {
+export async function loadPending(db: Db, businessId: string, mustInclude: string | null): Promise<PendingEvent[]> {
   const rows = await db
     .select({ ex: extractions, doc: documents })
     .from(extractions)

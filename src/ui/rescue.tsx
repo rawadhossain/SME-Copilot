@@ -16,6 +16,9 @@ const KIND_LABEL: Record<string, [string, string]> = {
   assumption: ["Planned", "Your confirmed orders and quotes (and any what-if you chose)."],
 };
 
+/** Link to one invoice or bill on the Invoices & bills page. */
+export const docHref = (d: { kind: string; id: string }) => `/room/invoices?${d.kind === "bill" ? "tab=bills&" : ""}focus=${d.id}`;
+
 /** "week 5 (3 to 9 Nov)": the week number with the dates it covers, from the forecast's own week table. */
 export function weekWithDates(weeks: any[] | undefined, n: number | null | undefined): string {
   if (n === null || n === undefined) return "none";
@@ -55,7 +58,7 @@ export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any
 
       {sh.shortage && (
         <Card title="Why this is happening" subtitle="Each cause taken out on its own: how much higher your lowest point would be without it. Causes can overlap, so they need not add up.">
-          {drivers.length === 0 ? <p className="text-sm text-ink-soft">No single cause stands out. The gap comes from the balance of all payments in and out.</p> : (
+          {drivers.length === 0 ? <p className="text-sm text-ink-soft">{(room.causeDocuments ?? []).length > 0 ? "No single order or late payer explains it. The gap comes from the invoices and bills listed below." : "No single cause stands out. The gap comes from the balance of all payments in and out."}</p> : (
             <ul className="divide-y divide-line text-sm">
               {drivers.map((d: any) => (
                 <li key={d.label} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-2">
@@ -66,6 +69,7 @@ export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any
                       {d.kind === "counterparty_delay" && <>From the payment history on {d.invoiceCount} invoice{d.invoiceCount === 1 ? "" : "s"}: they usually pay after the due date, so the forecast expects the money later.</>}
                       {d.kind === "downside_delay" && <>A what-if assumption you chose, not a fact.</>}
                     </p>
+                    {(d.documents ?? []).length > 0 && <p className="mt-1 text-xs">Open: {d.documents.map((x: any, i: number) => <span key={x.id}>{i > 0 && ", "}<Link href={docHref(x)} className="text-accent underline">Invoice {x.number}</Link></span>)}</p>}
                   </div>
                   <p className="num text-right font-medium text-good">+{money(d.effectMinor, cur)}</p>
                 </li>
@@ -75,8 +79,40 @@ export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any
         </Card>
       )}
 
+      {sh.shortage && (room.causeDocuments ?? []).length > 0 && (
+        <Card title="Invoices and bills behind this" subtitle={`The biggest invoices and bills counted before your lowest point. Open one to see its payments, or to record a payment you have already received or made.`}>
+          <ul className="divide-y divide-line text-sm">
+            {room.causeDocuments.map((it: any) => (
+              <li key={it.document.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1.5">
+                <span>{date(it.date)} · <Link href={docHref(it.document)} className="text-accent underline">{it.label}</Link> <Chip tone={it.kind === "estimate" || it.kind === "assumption" ? "caution" : "neutral"}>{KIND_LABEL[it.kind]?.[0] ?? it.kind}</Chip></span>
+                <span className={`num ${BigInt(it.amountMinor) < 0n ? "text-danger" : "text-good"}`}>{money(it.amountMinor, cur, { signed: true })}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <LedgerGlance room={room} cur={cur} />
+
       <ForecastBasis room={room} cur={cur} />
     </div>
+  );
+}
+
+/** Overdue invoices and bills due soon, with a link to the full list. */
+function LedgerGlance({ room, cur }: { room: any; cur: string }) {
+  const g = room.ledger;
+  if (!g) return null;
+  const empty = g.openInvoiceCount === 0 && g.billsDueSoonCount === 0;
+  return (
+    <Card title="Invoices and bills" subtitle="What customers still owe you and what you owe suppliers. The forecast uses these records." right={<Btn variant="secondary" href="/room/invoices">Open invoices & bills</Btn>}>
+      {empty ? <p className="text-sm text-ink-soft">No unpaid invoices and no bills due in the next two weeks.</p> : (
+        <ul className="space-y-1 text-sm">
+          <li><b className="num">{money(g.openInvoiceMinor, cur)}</b> owed to you across {g.openInvoiceCount} invoice{g.openInvoiceCount === 1 ? "" : "s"}{g.overdueCount > 0 && <>, of which <b className="num text-danger">{money(g.overdueMinor, cur)}</b> is overdue ({g.overdueCount})</>}.</li>
+          <li><b className="num">{money(g.billsDueSoonMinor, cur)}</b> in {g.billsDueSoonCount} bill{g.billsDueSoonCount === 1 ? "" : "s"} due within two weeks.</li>
+        </ul>
+      )}
+    </Card>
   );
 }
 
@@ -115,7 +151,7 @@ export function ForecastBasis({ room, cur }: { room: any; cur: string }) {
             <ul className="mt-1 divide-y divide-line text-sm">
               {items.map((it, i) => (
                 <li key={i} className="flex flex-wrap items-baseline justify-between gap-2 py-1.5">
-                  <span>{date(it.date)} · {it.label} <Chip tone={it.kind === "estimate" || it.kind === "assumption" ? "caution" : "neutral"}>{KIND_LABEL[it.kind]?.[0] ?? it.kind}</Chip></span>
+                  <span>{date(it.date)} · {it.document ? <Link href={docHref(it.document)} className="text-accent underline">{it.label}</Link> : it.label} <Chip tone={it.kind === "estimate" || it.kind === "assumption" ? "caution" : "neutral"}>{KIND_LABEL[it.kind]?.[0] ?? it.kind}</Chip></span>
                   <span className={`num ${BigInt(it.amountMinor) < 0n ? "text-danger" : "text-good"}`}>{money(it.amountMinor, cur, { signed: true })}</span>
                 </li>
               ))}

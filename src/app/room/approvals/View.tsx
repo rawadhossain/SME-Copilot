@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Card, Chip, Empty, ErrorNote, Field, Loading, inputClass } from "@/ui/kit";
 import { dateTime } from "@/ui/format";
+import { ScheduleReview } from "@/ui/case/ScheduleReview";
 import { call, useSession } from "@/ui/session";
 
 export default function Approvals() {
@@ -29,12 +30,12 @@ export default function Approvals() {
       </div>
       {msg && <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${msg.tone === "good" ? "border-good/40 bg-good-soft text-good" : "border-danger/40 bg-danger-soft text-danger"}`}>{msg.text}</p>}
       {list.length === 0 && <Empty title="Nothing is waiting">When the owner signs a plan that needs a second person, it appears here for an approver to confirm.</Empty>}
-      {list.map((p) => <Pending key={p.id} p={p} isApprover={isApprover} onDone={async (tone, text) => { setMsg({ tone, text }); await load(); }} />)}
+      {list.map((p) => <Pending key={p.id} p={p} cur={session.business.currency} isApprover={isApprover} onDone={async (tone, text) => { setMsg({ tone, text }); await load(); }} />)}
     </div>
   );
 }
 
-function Pending({ p, isApprover, onDone }: { p: any; isApprover: boolean; onDone: (tone: "good" | "danger", text: string) => Promise<void> }) {
+function Pending({ p, cur, isApprover, onDone }: { p: any; cur: string; isApprover: boolean; onDone: (tone: "good" | "danger", text: string) => Promise<void> }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +54,7 @@ function Pending({ p, isApprover, onDone }: { p: any; isApprover: boolean; onDon
       <div className="space-y-4 text-sm">
         <section><h3 className="font-medium">What it will ask for</h3>
           <ul className="mt-1 space-y-1.5">{s.asks.map((a: any, i: number) => <li key={i}><b>{a.counterparty}</b>: {a.text} <span className="text-ink-soft">{a.accepts}</span></li>)}</ul></section>
+        <ScheduleReview summary={s} cur={cur} />
         <section><h3 className="font-medium">If everyone agrees</h3><ul className="mt-1 list-disc space-y-1 pl-5">{s.then.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></section>
         <section><h3 className="font-medium">What it will never do</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{s.never.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></section>
         <p className="text-xs text-ink-soft">The plan&apos;s fingerprint is <span className="font-mono">{p.termsHash.slice(0, 12)}…</span>; it is the same one the owner signed, so you are confirming exactly what they saw.</p>
