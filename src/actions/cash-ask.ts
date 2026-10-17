@@ -6,12 +6,13 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { ASK_SUGGESTIONS, CASH_ASK_PURPOSE, type InsightFacts, type InsightTopic, askOutputSchema, buildAskMessages, checkRewrite, classifyQuestion, detailLines, ruleAnswer, type AskFacts, type AskLedger, type AskPlanFact } from "@/agent";
+import { ASK_SUGGESTIONS, CASH_ASK_PURPOSE, type AnalysisFacts, type AnalysisTopic, type InsightFacts, type InsightTopic, askOutputSchema, buildAskMessages, checkRewrite, classifyQuestion, detailLines, ruleAnswer, type AskFacts, type AskLedger, type AskPlanFact } from "@/agent";
 import { getGateway, type Gateway } from "@/ai";
 import { dbCallLogger } from "@/ai/db-logger";
 import { actionRecords, agentRuns, plans } from "@/db/schema";
 import type { Lever, PlanView } from "@/domain/plan";
 import { appendRecord } from "./log";
+import { getAnalysis } from "./analysis";
 import { getInsights } from "./insights";
 import { getLedgerSummary } from "./ledger";
 import { getRoom } from "./room";
@@ -66,8 +67,24 @@ async function gatherInsights(db: Db, businessId: string, topic: InsightTopic | 
   };
 }
 
+/** The business analysis as the assistant may see it: figures and wording from code; only the top customers' names. */
+async function gatherAnalysis(db: Db, businessId: string, topic: AnalysisTopic): Promise<AnalysisFacts> {
+  const a = await getAnalysis(db, businessId);
+  const ag = (x: typeof a.receivables) => ({ totalMinor: x.totalMinor.toString(), count: x.count, overdueMinor: x.overdueMinor.toString(), overdueShareBps: x.overdueShareBps, buckets: x.buckets.map((b) => ({ label: b.label, amountMinor: b.amountMinor.toString(), count: b.count })) });
+  const days = (d: typeof a.dso) => ({ days: d.days, reason: d.reason, windowDays: d.window.days, formula: d.formula });
+  const r = a.runway;
+  return {
+    asOf: a.asOf, currency: a.currency, topic, receivables: ag(a.receivables), payables: ag(a.payables), dso: days(a.dso), dpo: days(a.dpo),
+    payment: { averageDaysLate: a.paymentBehaviour.averageDaysLate, settledCount: a.paymentBehaviour.settledCount, windowDays: a.paymentBehaviour.window.days, reason: a.paymentBehaviour.reason, trend: a.paymentBehaviour.trend ? { recentAverage: a.paymentBehaviour.trend.recentAverage, priorAverage: a.paymentBehaviour.trend.priorAverage } : null },
+    runway: r.burning === null ? { burning: null, reason: r.reason } : r.burning ? { burning: true, months: r.months, monthlyBurnMinor: r.monthlyBurnMinor.toString(), balanceMinor: r.balanceMinor.toString(), monthsUsed: r.monthsUsed } : { burning: false, monthsUsed: r.monthsUsed, averageNetMinor: r.averageNetMinor.toString() },
+    customers: a.paymentBehaviour.customers.slice(0, 3).map((c) => ({ name: c.name, openMinor: c.openMinor.toString(), overdueMinor: c.overdueMinor.toString(), oldestDaysOverdue: c.oldestDaysOverdue, shareOfOpenBps: c.shareOfOpenBps })),
+    months: a.monthlyCash.months.map((m) => ({ month: m.month, inMinor: m.inMinor.toString(), outMinor: m.outMinor.toString(), netMinor: m.netMinor.toString() })),
+    limits: a.limits,
+  };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function gatherFacts(db: Db, businessId: string, lateDays: number | null, withLedger = false, insights: { topic: InsightTopic | null } | null = null): Promise<AskFacts> {
+async function gatherFacts(db: Db, businessId: string, lateDays: number | null, withLedger = false, insights: { topic: InsightTopic | null } | null = null, analysis: AnalysisTopic | null = null): Promise<AskFacts> {
   const room = (await getRoom(db, businessId, lateDays ? { lateDays } : {})) as any;
   const f = room.agreed ?? room.forecast;
   const reason = room.shortage?.reason;
@@ -107,6 +124,7 @@ async function gatherFacts(db: Db, businessId: string, lateDays: number | null, 
     doNothing: room.forecast ? { minBalanceMinor: room.forecast.minBalanceMinor, minBalanceWeek: room.forecast.minBalanceWeek } : null,
     ...(withLedger ? { ledger: await ledgerFacts(db, businessId) } : {}),
     ...(insights ? { insights: await gatherInsights(db, businessId, insights.topic) } : {}),
+    ...(analysis ? { analysis: await gatherAnalysis(db, businessId, analysis) } : {}),
     plans: planFacts, maxReplanRounds: MAX_REPLAN_ROUNDS, asOf: room.asOf, dataGaps: room.gaps ?? [], dataNotes: room.notes ?? [],
     evidence: [{ label: "Your cash and its causes", href: "/room" }, ...(root ? [{ label: "The plans and their numbers", href: `/room/case?run=${root.id}` }] : []), { label: "Funding options", href: "/room/funding" }, ...(insights ? [{ label: "Financial health and warnings", href: "/room#financial-health" }] : []), ...(withLedger ? [{ label: "Invoices & bills", href: "/room/invoices" }] : []), { label: "The records", href: "/room/safety?tab=records" }],
   };
@@ -118,8 +136,8 @@ export async function askAboutCash(db: Db, businessId: string, input: unknown, o
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(actionRecords).where(and(eq(actionRecords.businessId, businessId), eq(actionRecords.event, ACTION_EVENTS.CASH_QUESTION_ASKED), gte(actionRecords.createdAt, since)));
   if (n >= askMaxPerHour()) return { ok: false, error: "You have asked a lot of questions in the last hour. Please try again a little later." };
 
-  const { intent, lateDays, weekAsked, topic } = classifyQuestion(question);
-  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null, intent === "ledger", intent === "insights" ? { topic } : null);
+  const { intent, lateDays, weekAsked, topic, analysisTopic } = classifyQuestion(question);
+  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null, intent === "ledger", intent === "insights" ? { topic } : null, intent === "analysis" ? analysisTopic : null);
   // The answer is written by code from the facts. A model may only REWORD it (it sees the question and that draft, never the facts); the rewording is used
   // only if every figure in it is already in the draft and it claims no action. Anything else, or any failure, and the code-written answer is shown.
   const draft = ruleAnswer(intent, facts, lateDays, weekAsked);

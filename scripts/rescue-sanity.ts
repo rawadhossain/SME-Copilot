@@ -170,9 +170,23 @@ async function main() {
       ["what if the supplier says no?", "refusal"], ["What happens if they decline?", "refusal"], ["the lender rejects the application, then what", "refusal"],
       ["Is any of my data missing?", "data_quality"], ["is the forecast out of date?", "data_quality"], ["How accurate is this?", "data_quality"],
       ["what's the weather in Shenzhen", "unknown"], ["Should I hire another employee?", "unknown"], ["tell me a joke", "unknown"],
+      ["How long do my customers take to pay?", "analysis"], ["Who owes me the most?", "analysis"], ["What is my cash runway?", "analysis"], ["how old are my unpaid invoices?", "analysis"],
+      ["How much do I owe suppliers?", "analysis"], ["What is my DSO?", "analysis"], ["How many months will my cash last?", "analysis"], ["Show me money in and out each month", "analysis"],
+      ["What is my profit margin?", "analysis"], ["How much profit did we make last month?", "analysis"],
       ["approve the plan", "action"], ["please sign this now", "action"], ["Execute the plan", "action"], ["send the proposal to the supplier", "action"], ["pay the supplier now", "action"],
     ];
     for (const [q, want] of variants) assert.equal(classifyQuestion(q).intent, want, `"${q}" is routed to ${want}`);
+    // (c2) the business-analysis questions: answered from the analysis figures; profit and margin are declined because there is no cost data
+    assert.deepEqual(["What is my profit margin?", "How long do my customers take to pay?", "Who owes me the most?", "What is my cash runway?", "how old are my unpaid invoices?"].map((q) => classifyQuestion(q).analysisTopic), ["profit", "days_to_pay", "owes_most", "runway", "ageing"]);
+    for (const q of ["What is my profit margin?", "How much profit did we make last month?"]) {
+      const pr: any = await askAboutCash(db, askBiz, { question: q });
+      assert.ok(pr.ok && pr.intent === "analysis" && pr.unsupported && /no cost-of-goods or tax data/.test(pr.answer), `"${q}" is declined: we hold no cost data`);
+    }
+    const dtp: any = await askAboutCash(db, askBiz, { question: "How long do my customers take to pay?" });
+    assert.ok(dtp.ok && dtp.intent === "analysis" && /(days? (after|before) the due date|on the due date|not enough paid invoices)/.test(dtp.answer), `answered from the analysis: ${dtp.answer}`);
+    const rwq: any = await askAboutCash(db, askBiz, { question: "What is my runway?" });
+    assert.ok(rwq.ok && /(would last about|not shrinking|cannot work out a runway)/.test(rwq.answer), `runway answered: ${rwq.answer}`);
+    assert.ok(dtp.details.some((l: string) => /not profit or margin/.test(l)), "the supporting lines say this is cash, not profit");
     const dq: any = await askAboutCash(db, askBiz, { question: "Is any of my data missing or out of date?" });
     assert.ok(dq.ok && /forecast starts from your books as of \d{4}-\d{2}-\d{2}/.test(dq.answer) && /not a promise/.test(dq.answer), "a data question is answered from the books' date and the listed gaps and notes");
     const outside: any = await askAboutCash(db, askBiz, { question: "What will the Tesla share price be next year?" });

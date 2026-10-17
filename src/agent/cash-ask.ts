@@ -18,7 +18,26 @@ export const askOutputSchema = z.object({
 });
 export type AskOutput = z.output<typeof askOutputSchema>;
 
-export type AskIntent = "why_short" | "late" | "plan_compare" | "avoid_borrowing" | "ledger" | "refusal" | "data_quality" | "insights" | "action" | "unknown";
+export type AskIntent = "why_short" | "late" | "plan_compare" | "avoid_borrowing" | "ledger" | "refusal" | "data_quality" | "insights" | "analysis" | "action" | "unknown";
+
+/** Which part of the business analysis (cash view) a question is about. "profit" is a question the records cannot answer: there is no cost data. */
+export type AnalysisTopic = "days_to_pay" | "owes_most" | "runway" | "ageing" | "payables" | "dso" | "dpo" | "monthly" | "profit";
+
+/** The business analysis as the assistant may see it: figures written by code from invoices, bills and bank transactions. No names beyond the top customers. */
+export interface AnalysisFacts {
+  asOf: string;
+  currency: string;
+  topic: AnalysisTopic;
+  receivables: { totalMinor: string; count: number; overdueMinor: string; overdueShareBps: number; buckets: { label: string; amountMinor: string; count: number }[] };
+  payables: { totalMinor: string; count: number; overdueMinor: string; overdueShareBps: number; buckets: { label: string; amountMinor: string; count: number }[] };
+  dso: { days: number | null; reason: string | null; windowDays: number; formula: string };
+  dpo: { days: number | null; reason: string | null; windowDays: number; formula: string };
+  payment: { averageDaysLate: number | null; settledCount: number; windowDays: number; reason: string | null; trend: { recentAverage: number; priorAverage: number } | null };
+  runway: { burning: boolean | null; months?: number; monthlyBurnMinor?: string; balanceMinor?: string; monthsUsed?: number; averageNetMinor?: string; reason?: string };
+  customers: { name: string; openMinor: string; overdueMinor: string; oldestDaysOverdue: number; shareOfOpenBps: number }[];
+  months: { month: string; inMinor: string; outMinor: string; netMinor: string }[];
+  limits: string[];
+}
 
 /** Which finding a financial-health question is about; null = all of them, most important first. */
 export type InsightTopic = "overdue" | "bills" | "concentration" | "spending" | "cash";
@@ -71,6 +90,8 @@ export interface AskFacts {
   ledger?: AskLedger;
   /** Financial health and early warnings (only when the question is about them). */
   insights?: InsightFacts;
+  /** The business analysis (cash view), only when the question is about it. */
+  analysis?: AnalysisFacts;
   /** Where the owner can see the underlying records. */
   evidence: { label: string; href: string }[];
 }
@@ -78,12 +99,31 @@ export interface AskFacts {
 const NUM_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, a: 1 };
 
 /** Routes a question to what it asks. Plain rules, no model: unknown questions are said to be unknown, never guessed. */
-export function classify(question: string): { intent: AskIntent; lateDays: number | null; weekAsked: number | null; topic: InsightTopic | null } {
+export function classify(question: string): { intent: AskIntent; lateDays: number | null; weekAsked: number | null; topic: InsightTopic | null; analysisTopic: AnalysisTopic | null } {
   const r = classifyIntent(question);
   const q = question.toLowerCase();
   const wk = q.match(/\bweek\s*(\d{1,2})\b/);
   const topic: InsightTopic | null = r.intent !== "insights" ? null : /\b(overdue|receivables?|owe[sd]?|invoices?)\b/.test(q) ? "overdue" : /\b(bills?|obligations?|suppliers?)\b/.test(q) ? "bills" : /concentrat|depend/.test(q) ? "concentration" : /\b(spending|spend|unusual)\b/.test(q) ? "spending" : /\b(cash|money in|money out)\b/.test(q) ? "cash" : null;
-  return { ...r, weekAsked: wk ? Number(wk[1]) : null, topic };
+  return { ...r, weekAsked: wk ? Number(wk[1]) : null, topic, analysisTopic: r.intent === "analysis" ? analysisTopicOf(q) : null };
+}
+
+/** Questions about the business analysis. Order matters: profit first (it cannot be answered), then the specific figures. */
+function analysisTopicOf(q: string): AnalysisTopic | null {
+  if (/\b(profit|profits|profitable|profitability|margins?|gross|net income|cost of goods|cogs|earnings)\b/.test(q)) return "profit";
+  if (/\brunway\b|\bburn(ing)?\b|\bhow (long|many months)\b.{0,40}\b(cash|money|bank)\b.{0,20}\b(last|left|go)\b|\bmonths of (cash|money)\b/.test(q)) return "runway";
+  if (/\bdso\b|days sales outstanding/.test(q)) return "dso";
+  if (/\bdpo\b|days payable/.test(q)) return "dpo";
+  if (/\bwho owes? me\b|\b(biggest|largest) (debtor|debt|unpaid|overdue|amount owed)\b|\bwhich customer owes\b|\bwho is my (biggest|largest|slowest)\b/.test(q)) return "owes_most";
+  if (/\bhow old\b|\bageing\b|\baging\b|\baged\b|\boldest (unpaid|overdue|invoice)/.test(q)) return "ageing";
+  if (/\bhow much do i owe\b|\bwhat do i owe\b|\bmoney i owe\b/.test(q)) return "payables";
+  if (/\b(each|per|every|last|past|monthly)\b.{0,20}\bmonths?\b|\bmonthly (cash|income|spending|money)|\bmoney (in|coming in)\b.{0,30}\b(out|going out)\b.{0,30}\bmonth/.test(q)) return "monthly";
+  if (/\bhow (long|many days)\b.{0,40}\b(customers?|clients?|they)\b|\b(average|usual|typical|avg)\b.{0,30}\bdays?\b.{0,30}(pay|late)|\bhow (late|slow|quickly|fast)\b.{0,30}\b(customers?|clients?)\b.{0,20}\bpay|\bdo (my )?(customers?|clients?) pay (on time|late)\b/.test(q)) return "days_to_pay";
+  return null;
+}
+
+/** Is this question about the business analysis (and not a what-if or an invoice list)? */
+function isAnalysisQuestion(q: string): boolean {
+  return analysisTopicOf(q) !== null;
 }
 
 function classifyIntent(question: string): { intent: AskIntent; lateDays: number | null } {
@@ -93,6 +133,8 @@ function classifyIntent(question: string): { intent: AskIntent; lateDays: number
   // Attempts to talk the assistant out of its rules, or to act through it, are declined like any request to act.
   if (/\b(ignore|forget|disregard|override)\b.{0,30}\b(instructions|rules|limits|mandate|guidelines)\b|^\s*(system|assistant|developer)\s*:|you are now (allowed|able|free)|i (hereby )?authori[sz]e you|\b(reveal|show|print|tell me)\b.{0,30}\b(key|password|secret|token|credential)/.test(q)) return { intent: "action", lateDays: null };
   if (/^(please\s+)?(sign|approve|execute|run|pay|send|schedule|transfer|accept|cancel|go ahead|do it|just do|confirm)\b/.test(q) || /\b(sign|approve|execute|pay|send|transfer) (it|this|that|the plan|the supplier|them) (for me|now)\b/.test(q)) return { intent: "action", lateDays: null };
+  // Questions about how the business is doing as a business (ageing, days to be paid, runway, profit) come before the what-if "late" rule.
+  if (isAnalysisQuestion(q)) return { intent: "analysis", lateDays: null };
   if (/\b(late|delay|slow|longer)\b/.test(q) && /\b(pay|paid|payment|customer|invoice)/.test(q)) return { intent: "late", lateDays: lateDays && lateDays >= 1 && lateDays <= 90 ? lateDays : null };
   // Trends and early warnings come before the refusal, borrowing and ledger rules ("financial" would otherwise read as "borrow").
   if (/\b(trends?|warnings?|financial (health|position)|how healthy|what changed|getting (worse|better)|worry|worried|watch out|early warning|concentrat\w*|unusual|spending|bills? (rising|up))\b/.test(q)) return { intent: "insights", lateDays: null };
@@ -107,7 +149,7 @@ function classifyIntent(question: string): { intent: AskIntent; lateDays: number
 
 const gbp = (cur: string, minor: string | bigint) => formatMoney(money(BigInt(minor), cur), 2);
 
-export const SUGGESTIONS = ["What are my biggest financial warnings?", "Which invoices are overdue?","Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?"];
+export const SUGGESTIONS = ["How long do my customers take to pay?", "What are my biggest financial warnings?", "Which invoices are overdue?","Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?"];
 
 /** The deterministic answer. Every figure is taken from `facts`. */
 export function ruleAnswer(intent: AskIntent, facts: AskFacts, lateDays: number | null = null, weekAsked: number | null = null): AskOutput {
@@ -164,10 +206,72 @@ export function ruleAnswer(intent: AskIntent, facts: AskFacts, lateDays: number 
     }
     case "insights":
       return insightsAnswer(facts);
+    case "analysis":
+      return analysisAnswer(facts);
     case "refusal":
       return said(`If someone refuses or counters outside your terms, nothing is committed or paid. Agreements already reached are kept on hold, and you decide: revise the terms yourself, ask for a re-plan (up to ${facts.maxReplanRounds} rounds, avoiding what was refused), or withdraw everything. Any new plan needs a new signature from you.`);
     default:
       return { answer: "I can answer questions about why you are short of cash, what a late customer would do, which invoices are overdue and which bills are due, how your plans compare, whether you can avoid borrowing, and what happens if someone refuses. I cannot answer anything else from your records.", unsupported: "Not a question I can answer from your records." };
+  }
+}
+
+const pctText = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}%`;
+const dayText = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+
+/** Answers about the business analysis. Every figure is taken from `facts.analysis`; a question about profit says plainly that there is no cost data. */
+function analysisAnswer(facts: AskFacts): AskOutput {
+  const a = facts.analysis;
+  if (!a) return { answer: "I could not read your business analysis just now.", unsupported: "No analysis available." };
+  const c = a.currency;
+  const said = (answer: string): AskOutput => ({ answer, unsupported: null });
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  switch (a.topic) {
+    case "profit":
+      return { answer: "I cannot tell you about profit or margin. Your records hold invoices, bills and bank transactions, but no cost-of-goods or tax data, so I can only describe your cash. The Business analysis section on the Today page shows what comes in and goes out each month.", unsupported: "No cost-of-goods or tax data." };
+    case "days_to_pay": {
+      const p = a.payment;
+      if (p.averageDaysLate === null) return { answer: `There are not enough paid invoices to say how long customers take. ${p.reason ?? ""}`.trim(), unsupported: "Not enough paid invoices." };
+      const d = p.averageDaysLate;
+      const how = d > 0 ? `${dayText(d)} after the due date` : d < 0 ? `${dayText(-d)} before the due date` : "on the due date";
+      const trend = p.trend ? ` In the last 90 days the average was ${p.trend.recentAverage} against ${p.trend.priorAverage} in the 90 days before (positive is late).` : "";
+      return said(`Customers pay you on average ${how}, based on ${plural(p.settledCount, "invoice")} paid in the last ${p.windowDays} days.${trend}`);
+    }
+    case "owes_most": {
+      const t = a.customers[0];
+      if (!t || BigInt(t.openMinor) === 0n) return said("No customer owes you anything unpaid.");
+      const overdue = BigInt(t.overdueMinor) > 0n ? `; ${gbp(c, t.overdueMinor)} of that is past its due date, the oldest by ${dayText(t.oldestDaysOverdue)}` : "";
+      return said(`${t.name} owes you the most: ${gbp(c, t.openMinor)}, which is ${pctText(t.shareOfOpenBps)} of everything customers owe you${overdue}.`);
+    }
+    case "runway": {
+      const r = a.runway;
+      if (r.burning === null) return { answer: `I cannot work out a runway yet. ${r.reason ?? ""}`.trim(), unsupported: "Not enough history." };
+      if (r.burning === false) return said(`Your cash is not shrinking month to month: over the last ${plural(r.monthsUsed ?? 0, "complete month")}, more came in from customers than went out, by ${gbp(c, r.averageNetMinor ?? "0")} a month on average.`);
+      return said(`At the pace of the last ${plural(r.monthsUsed ?? 0, "complete month")}, your bank balance of ${gbp(c, r.balanceMinor ?? "0")} would last about ${plural(r.months ?? 0, "month")}: on average ${gbp(c, r.monthlyBurnMinor ?? "0")} more went out than came in each month. One large payment, such as a tax bill, can make that pace look worse than usual.`);
+    }
+    case "ageing": {
+      const r = a.receivables;
+      if (r.count === 0) return said("No customer invoices are unpaid, so there is nothing to age.");
+      const rows = r.buckets.filter((b) => b.count > 0).map((b) => `${b.label.toLowerCase()}: ${gbp(c, b.amountMinor)} (${plural(b.count, "invoice")})`).join("; ");
+      return said(`Customers owe you ${gbp(c, r.totalMinor)} across ${plural(r.count, "unpaid invoice")}. By how overdue they are: ${rows}. In total ${pctText(r.overdueShareBps)} is past its due date.`);
+    }
+    case "payables": {
+      const p = a.payables;
+      if (p.count === 0) return said("You have no unpaid supplier bills.");
+      const rows = p.buckets.filter((b) => b.count > 0).map((b) => `${b.label.toLowerCase()}: ${gbp(c, b.amountMinor)}`).join("; ");
+      return said(`You owe suppliers ${gbp(c, p.totalMinor)} across ${plural(p.count, "unpaid bill")}: ${rows}.${BigInt(p.overdueMinor) > 0n ? ` ${gbp(c, p.overdueMinor)} is past its due date.` : ""}`);
+    }
+    case "dso":
+    case "dpo": {
+      const d = a.topic === "dso" ? a.dso : a.dpo;
+      const name = a.topic === "dso" ? "Days sales outstanding" : "Days payable outstanding";
+      if (d.days === null) return { answer: `${name} cannot be worked out yet. ${d.reason ?? ""}`.trim(), unsupported: "Not enough documents." };
+      return said(`${name} is ${d.days} days. That is ${d.formula}, using the last ${d.windowDays} days.`);
+    }
+    case "monthly": {
+      if (a.months.length === 0) return { answer: "There is not yet a complete calendar month of bank history to report.", unsupported: "Not enough history." };
+      const rows = a.months.slice(-3).map((m) => `${m.month}: ${gbp(c, m.inMinor)} in, ${gbp(c, m.outMinor)} out`).join("; ");
+      return said(`Money in from customers and money out, by complete month: ${rows}. The full table is in the Business analysis section on Today.`);
+    }
   }
 }
 
@@ -247,6 +351,8 @@ export function detailLines(intent: AskIntent, facts: AskFacts, lateDays: number
         ...relevantFindings(ins).flatMap((f) => [`${f.severity === "high" ? "Important" : f.severity === "medium" ? "Watch" : "Note"}: ${f.title}. ${f.figures.map((x) => `${x.label} ${show(x)}`).join("; ")}.`, ...f.uncertainty.map((u) => `  Uncertainty: ${u}`)]),
       ];
     }
+    case "analysis":
+      return facts.analysis ? [`Based on your invoices, bills and bank transactions as of ${facts.analysis.asOf}.`, facts.analysis.limits[0] ?? "It does not include cost of goods or tax, so it shows cash, not profit."] : [];
     case "ledger":
       return [...(facts.ledger?.overdueInvoices ?? []).map((x) => `Overdue invoice ${x.number} (${x.counterparty}): ${gbp(c, x.outstandingMinor)} still owed, ${x.overdueDays} days past due.`), ...(facts.ledger?.billsDueSoon ?? []).map((x) => `Bill ${x.number} (${x.counterparty}): ${gbp(c, x.outstandingMinor)} due ${x.dueOn}.`)];
     default:

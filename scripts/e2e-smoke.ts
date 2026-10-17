@@ -327,6 +327,25 @@ async function main() {
       log("matching: no session 401, no CSRF 403, other company 403, owner 200 with profile and history source; trading start: bad dates 400, owner 200, approver 403");
     }
     {
+      // Business analysis (cash view): read-only, any signed-in role of the business.
+      const aUrl = `/api/business/${biz}/analysis`;
+      assert.equal((await api(aUrl, { cookie: false, csrf: false })).status, 401, "analysis: no session");
+      assert.equal((await api("/api/business/50d04f73-3186-40b1-96fe-46f478ea6134/analysis")).status, 403, "analysis: another company");
+      const an = await api(aUrl);
+      assert.equal(an.status, 200, JSON.stringify(an.json));
+      assert.ok(an.json.receivables?.buckets?.length === 5 && Array.isArray(an.json.limits) && an.json.limits.some((l: string) => /not profit or margin/.test(l)), "ageing buckets and the limits note are returned");
+      assert.equal(await asApprover(async () => (await api(aUrl)).status), 200, "an approver can read the analysis");
+      {
+        // The Today section renders with this story's real analysis (server-side render; catches data-shape mistakes).
+        const { renderToString } = await import("react-dom/server");
+        const { createElement: h } = await import("react");
+        const { AnalysisBody } = await import("../src/ui/analysis");
+        const html = renderToString(h(AnalysisBody, { a: an.json }));
+        assert.ok(html.includes("Cash, not profit") && html.includes("Owed to you") && html.includes("How overdue") && html.includes("What customers owe you, by how overdue"), "the analysis section renders with real data");
+      }
+      log("analysis: no session 401, other company 403, owner 200 (5 ageing buckets, limits note), approver 200");
+    }
+    {
       // Alerts and the monitor: sessions, CSRF, company scoping, roles.
       const runUrl = `/api/business/${biz}/monitor/run`;
       const listUrl = `/api/business/${biz}/alerts`;

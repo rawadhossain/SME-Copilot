@@ -37,6 +37,7 @@
     "check:matching": "bun --env-file=.env scripts/matching-sanity.ts",
     "monitor": "bun --env-file=.env scripts/monitor.ts",
     "check:monitor": "bun --env-file=.env scripts/monitor-sanity.ts",
+    "check:analysis": "bun --env-file=.env scripts/analysis-sanity.ts",
     "check:flight": "bun --env-file=.env scripts/flight-sanity.ts",
     "test:simulator": "bun --env-file=.env scripts/browser-simulator.ts",
     "demo:flight": "bun --env-file=.env scripts/demo-flight.ts",

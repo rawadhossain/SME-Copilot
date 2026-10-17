@@ -13,3 +13,4 @@ export * from "./insights";
 export * from "./recovery";
 export * from "./flight";
 export * from "./alerts";
+export * from "./analysis";
