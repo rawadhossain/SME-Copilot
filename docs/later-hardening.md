@@ -28,3 +28,4 @@
 - Evidence export is a case export plus the whole business log; a per-case slice of the chain cannot be verified on its own. The HTML self-check needs a browser with Ed25519 in Web Crypto (Node: scripts/verify-export.mjs).
 - bun audit: 1 high (braces, via eslint-config-next) and 1 moderate (esbuild, via drizzle-kit), both dev tooling only; update when upstream releases land.
 - Funding limits in the signed mandate (cost and amount) only shape the comparison today; no loan application exists to gate. When one is built, the gate must enforce them. The contract check compares terms the owner TYPES; reading a lender contract document through the quarantined reader (with a recording for the mock provider) is not built. Saved offers have no edit history beyond archived rows.
+- Rescue journey: committed browser test (Playwright) for Today to outcome; phone signing dialog and second-approver screens; screen reader pass; per-payment dates and amounts in the signing review.

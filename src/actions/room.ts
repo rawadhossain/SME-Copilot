@@ -56,13 +56,42 @@ export async function getRoom(db: Db, businessId: string, opts: RoomOptions = {}
   const lateDays = opts.lateDays && opts.lateDays >= 1 && opts.lateDays <= 90 ? Math.floor(opts.lateDays) : null;
   const downside = lateDays === null ? null : { days: lateDays, ...lineOf(buildForecast(ctx.input, { events: headlineEvents, horizonWeeks: ctx.horizonWeeks, adjustments: headlineAdjustments, downsideDelayDays: lateDays })) };
   const mandate = await getMandateInfo(db, businessId).catch(() => null);
-  // What is causing the gap: each driver removed on its own, ranked (deterministic; same engine as the forecast).
+  // The forecast the headline shows (the agreed terms when there are any). Drivers, the basis and the gaps all describe THIS forecast.
+  const headlineOptions = { events: headlineEvents, horizonWeeks: ctx.horizonWeeks, adjustments: headlineAdjustments };
+  const headline = buildForecast(ctx.input, headlineOptions);
+  // What is causing the gap: each driver removed on its own, ranked (deterministic; same engine as the forecast). Each carries the record it
+  // comes from (date and amount of the commitment, or how many invoices a late-paying customer holds back) so the owner can trace it.
   const drivers = detection.shortage
-    ? attributeDrivers(ctx.input, { events: ctx.pending.map((p) => p.event), horizonWeeks: ctx.horizonWeeks }).drivers
-        .slice(0, 4).map((d) => ({ kind: d.kind, label: d.label, effectMinor: d.effectOnMinimum.toString() }))
+    ? attributeDrivers(ctx.input, headlineOptions).drivers.filter((d) => d.effectOnMinimum > 0n).slice(0, 4).map((d) => {
+        const idx = d.kind === "event" ? Number(d.refs.find((r) => /^event:\d+$/.test(r))?.slice(6)) : NaN;
+        const ev = Number.isInteger(idx) ? headlineEvents[idx] : undefined;
+        return {
+          kind: d.kind, label: d.label, effectMinor: d.effectOnMinimum.toString(), shareBps: d.shareOfShortfallBps,
+          date: ev?.date ?? null, amountMinor: ev ? ev.amountMinor.toString() : null, confidence: ev?.confidence ?? null,
+          invoiceCount: d.kind === "counterparty_delay" ? d.refs.length : null,
+        };
+      })
     : [];
+  // What the forecast is built from, up to the week of the lowest balance, by how certain each figure is (the engine's own provenance tag).
+  const upToLowest = headline.items.filter((it) => it.weekIndex <= headline.minimum.weekIndex);
+  const basis = (["actual", "confirmed", "estimate", "assumption"] as const).map((k) => {
+    const rows = upToLowest.filter((it) => it.kind === k);
+    return { kind: k, count: rows.length, inMinor: rows.filter((r) => r.amount > 0n).reduce((a, r) => a + r.amount, 0n).toString(), outMinor: rows.filter((r) => r.amount < 0n).reduce((a, r) => a - r.amount, 0n).toString() };
+  });
+  const abs = (n: bigint) => (n < 0n ? -n : n);
+  const lowestWeekItems = headline.items.filter((it) => it.weekIndex === headline.minimum.weekIndex)
+    .sort((a, b) => (abs(a.amount) < abs(b.amount) ? 1 : abs(a.amount) > abs(b.amount) ? -1 : 0))
+    .slice(0, 5).map((it) => ({ date: it.date, label: it.label, amountMinor: it.amount.toString(), kind: it.kind, note: it.note ?? null }));
+  // What the owner can do to make the forecast firmer. Plain facts from the records, nothing guessed.
+  const gaps: string[] = [];
+  if (BigInt(biz.reserveMinor) === 0n) gaps.push("No safety cushion is set, so you are only warned when cash would go below zero.");
+  if (bank && BigInt(bank.balanceMinor) !== ctx.input.openingBalance) gaps.push("The practice bank and your books show different balances. The forecast starts from your books.");
+  const lowConf = ctx.pending.filter((p) => p.event.confidence === "low").length;
+  if (lowConf > 0) gaps.push(`${lowConf} confirmed order${lowConf === 1 ? " is" : "s are"} marked low confidence. Check its dates and amounts.`);
+  const notes: string[] = [];
+  if (basis[2].count > 0) notes.push("Some money is expected rather than confirmed, for example customers who usually pay after the due date. Those dates are estimates, not promises.");
   return toJsonValue({
-    drivers,
+    drivers, basis: { throughWeek: headline.minimum.weekIndex + 1, rows: basis, lowestWeekItems }, gaps, notes,
     business: { id: biz.id, name: biz.name, currency: biz.baseCurrency, isSynthetic: biz.isSynthetic, isTest: biz.isTest },
     asOf: ctx.asOf, reserveMinor: biz.reserveMinor,
     balances: { booksMinor: ctx.input.openingBalance, sandboxBankMinor: bank?.balanceMinor ?? null },

@@ -27,6 +27,7 @@
     "check:agent": "bun --env-file=.env scripts/agent-sanity.ts",
     "check:financing": "bun scripts/financing-sanity.ts",
     "check:plan": "bun --env-file=.env scripts/plan-sanity.ts",
+    "check:rescue": "bun --env-file=.env scripts/rescue-sanity.ts",
     "mandate:v2": "bun --env-file=.env scripts/mandate-v2.ts",
     "mandate:funding": "bun --env-file=.env scripts/mandate-funding-limits.ts",
     "auth:seed": "bun --env-file=.env scripts/seed-accounts.ts",

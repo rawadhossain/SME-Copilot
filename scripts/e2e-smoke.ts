@@ -251,6 +251,15 @@ async function main() {
       assert.equal(badAmount.status, 400, "a three-decimal GBP amount is refused, not rounded");
       const under = await api(`/api/business/${biz}/funding/compare`, { body: { offers: [{ ...offer, schedule: { ...offer.schedule, amount: "1000.00" } }] } });
       assert.equal(under.status, 400, "an offer that repays less than it advances is refused");
+      // "Ask about my cash" is read-only and needs a session and the CSRF token; a request to act is declined and creates nothing.
+      assert.equal((await api(`/api/business/${biz}/ask`, { body: { question: "Why am I short?" }, cookie: false, csrf: false })).status, 401, "ask needs a session");
+      assert.equal((await api(`/api/business/${biz}/ask`, { body: { question: "Why am I short?" }, csrf: false })).status, 403, "ask needs the CSRF token");
+      assert.equal((await api(`/api/business/${biz}/ask`, { body: { question: "" } })).status, 400, "an empty question is refused");
+      const authsBefore = (await api(`/api/business/${biz}/cases`)).json.length;
+      const asked = await api(`/api/business/${biz}/ask`, { body: { question: "sign it for me" } });
+      assert.ok(asked.status === 200 && asked.json.ok && /cannot sign/i.test(asked.json.answer), "a request to act is declined");
+      assert.equal((await api(`/api/business/${biz}/cases`)).json.length, authsBefore, "asking opened no case");
+      log("ask about my cash: needs a session and CSRF, empty refused, 'sign it for me' declined with nothing created");
       log("funding: comparison matches the hand figure; no session, no CSRF token, a too-precise amount and an under-repaying offer are all refused");
 
       // Saved offers: save, read back, replace (the set is replaced, the old rows archived), and a bad save writes nothing.
@@ -320,7 +329,16 @@ async function main() {
       const lines = (await api(`/api/business/${biz}/room/forecast?runId=${lastRun.id}&planId=${lastRun.plans[0].id}&authorisationId=${finalAuth}`)).json;
       const chart = renderToString(h(Chart, { currency: "GBP", reserveMinor: lines.reserveMinor, series: [{ key: "a", label: "Do nothing", weeks: lines.doNothing.weeks, color: "#000" }, { key: "b", label: "Executed", weeks: lines.agreed.weeks, color: "#0a0" }] }));
       assert.ok(chart.includes("<svg"));
-      log("components: plan table, timeline, execution, verification and chart render with the real data");
+      // Rescue My Cash Flow screens: the cash picture (cause, certainty, gaps) and the outcome summary come from the same real data.
+      const rescue = await import("../src/ui/rescue");
+      const room = (await api(`/api/business/${biz}/room`)).json;
+      const picture = renderToString(h(rescue.CashPicture, { room, cur: "GBP", latestRunId: shortageRunId, busy: false, onAsk: () => {} }));
+      assert.ok(picture.includes("How sure is this forecast?") && picture.includes("Confirmed"), "cash picture shows the certainty breakdown");
+      const doneAuth = caseNow.authorisations.find((a: any) => a.authorisation.id === finalAuth);
+      const outcome = renderToString(h(rescue.OutcomeSummary, { auth: doneAuth, reason: runs[0].trigger.reason, doNothing: lines.doNothing, agreed: lines.agreed, reserveMinor: lines.reserveMinor, cur: "GBP", exportBase: `/api/business/${biz}/cases/${shortageRunId}/export` }));
+      assert.ok(outcome.includes("Attempted") && outcome.includes("Verified") && outcome.includes("Download the evidence"), "outcome summary renders attempted, executed, verified and the evidence links");
+      assert.ok(!outcome.includes("Not confirmed") || doneAuth.execution.verification?.ok === false, "a passing independent check is what makes it a success");
+      log("components: plan table, timeline, execution, verification, chart, cash picture and outcome summary render with the real data");
     }
     // the older owner routes now need the password too
     {

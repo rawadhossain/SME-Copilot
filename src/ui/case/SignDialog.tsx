@@ -6,14 +6,14 @@
 // The letters and the drawing are bound by the signature: once signed, neither can change.
 import { useEffect, useMemo, useState } from "react";
 import { Btn, Chip, ErrorNote, Field, Loading, Modal, Seal, inputClass } from "../kit";
-import { dateTime, short } from "../format";
+import { dateTime, money, short, week } from "../format";
 import { call, useSession } from "../session";
 import { LetterEditor } from "./LetterEditor";
 import { SignaturePad } from "./SignaturePad";
 
 const STEPS = ["Review the terms", "Write the proposals", "Sign"] as const;
 
-export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: boolean; onClose: () => void; runId: string; planId: string | null; onSigned: (authorisationId: string, status?: string) => void }) {
+export function SignDialog({ open, onClose, runId, planId, onSigned, plan = null, doNothing = null, reserveMinor = null, cur = "GBP" }: { open: boolean; onClose: () => void; runId: string; planId: string | null; onSigned: (authorisationId: string, status?: string) => void; plan?: any; doNothing?: any; reserveMinor?: string | null; cur?: string }) {
   const { session } = useSession();
   const biz = session?.business.id;
   const [prev, setPrev] = useState<any>(null);
@@ -89,6 +89,20 @@ export function SignDialog({ open, onClose, runId, planId, onSigned }: { open: b
           {!denied && step === 0 && (
             <>
               <p className="text-ink-soft">By signing, you let the system do <b>only</b> the following, and nothing else. It is checked again against your limits before every step.</p>
+              {plan && (
+                <section aria-label="What this does to your cash" className="rounded-lg border border-line bg-white/70 p-3">
+                  <h3 className="mb-2 font-medium">What it does to your cash <span className="text-xs font-normal text-ink-soft">(a simulation from fixed code: if the other side accepts every term)</span></h3>
+                  <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div><dt className="text-xs text-ink-soft">Lowest balance if you do nothing</dt><dd className="num">{doNothing ? money(doNothing.minBalanceMinor, cur) : "–"}</dd></div>
+                    <div><dt className="text-xs text-ink-soft">Lowest balance with this plan</dt><dd className="num font-medium">{money(plan.metrics.minBalanceMinor, cur)} <span className="text-xs font-normal text-ink-soft">({week(plan.metrics.minBalanceWeek)})</span></dd></div>
+                    <div><dt className="text-xs text-ink-soft">Safety cushion</dt><dd>{reserveMinor === null ? "–" : BigInt(plan.metrics.minBalanceMinor) >= BigInt(reserveMinor) ? <Chip tone="good">kept</Chip> : <Chip tone="caution">short by {money((BigInt(reserveMinor) - BigInt(plan.metrics.minBalanceMinor)).toString(), cur)}</Chip>}</dd></div>
+                    <div><dt className="text-xs text-ink-soft">Total cost</dt><dd className="num">{money(plan.metrics.totalCostMinor, cur)}</dd></div>
+                  </dl>
+                  {(plan.warnings ?? []).map((w: string, i: number) => <p key={i} className="mt-2 text-xs text-caution">▲ {w}</p>)}
+                  <details className="mt-2"><summary className="cursor-pointer text-xs text-accent">Assumptions and risks</summary><ul className="mt-1 list-disc pl-5 text-xs text-ink-soft">{(plan.assumptions ?? []).map((a: string, k: number) => <li key={k}>{a}</li>)}<li>If anyone refuses or counters, nothing is committed: you are asked again.</li></ul></details>
+                  <p className="mt-2 text-xs text-ink-soft">Your limits: {(plan.checks ?? []).length} check{(plan.checks ?? []).length === 1 ? "" : "s"} passed at this point. {prev.needsSecondConfirmation ? "A second approver is required." : "No second approver is required."}</p>
+                </section>
+              )}
               <section>
                 <h3 className="mb-1 font-medium">It will ask</h3>
                 <ul className="space-y-2">{s.asks.map((a: any, i: number) => (

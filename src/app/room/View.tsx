@@ -5,6 +5,7 @@ import { Chart } from "@/ui/Chart";
 import { Btn, Card, Chip, Empty, ErrorNote, Loading, Stat, Th } from "@/ui/kit";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
+import { AskCash, CashPicture, weekWithDates } from "@/ui/rescue";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function CashDesk() {
@@ -45,12 +46,10 @@ export default function CashDesk() {
   if (!room) return error ? <ErrorNote>{error}</ErrorNote> : <Loading label="Reading your books" />;
   const doNothing = room.forecast;
   const f = room.agreed ?? room.forecast; // the headline is the forecast WITH any terms already agreed; "do nothing" stays as a comparison line
-  const sh = room.shortage;
   const roots = cases.filter((c) => !c.parentRunId);
   const latest = roots.filter((c) => c.lifecycle !== "superseded").at(-1) ?? roots.at(-1);
   const running = cases.find((c) => c.status === "running");
   const neg = f.firstNegativeWeek;
-  const tone = sh.shortage ? (sh.reason.kind === "below_zero" ? "danger" : "caution") : "good";
 
   return (
     <div className="space-y-6">
@@ -63,39 +62,17 @@ export default function CashDesk() {
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="In the bank today" value={money(room.balances.sandboxBankMinor, cur)} sub="practice bank, no real money" />
-        <Stat label="In your books" value={money(room.balances.booksMinor, cur)} sub="where the forecast starts" />
         <Stat label="Your safety cushion" value={money(room.reserveMinor, cur)} sub="you never want to dip below this" />
-        <Stat label="Lowest point ahead" value={money(f.minBalanceMinor, cur)} sub={`${week(f.minBalanceWeek)}${neg ? ` · first below zero: ${week(neg)}` : ""}`} tone={BigInt(f.minBalanceMinor) < 0n ? "danger" : BigInt(f.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
+        <Stat label="Lowest point ahead" value={money(f.minBalanceMinor, cur)} sub={weekWithDates(f.weeks, f.minBalanceWeek)} tone={BigInt(f.minBalanceMinor) < 0n ? "danger" : BigInt(f.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
       </div>
 
-      {running && <Card tone="accent" title={<span className="flex items-center gap-2">Your assistant is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft">It is reading your books and searching for plans. Open Plans to watch it work.</p></Card>}
+      {running && <Card tone="accent" title={<span className="flex items-center gap-2">Your assistant is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft" role="status">It is reading your books and searching for plans. Open Plans to watch it work.</p></Card>}
 
-      {sh.shortage ? (
-        <Card tone={tone} title={<span className="flex flex-wrap items-center gap-2">{sh.reason.kind === "below_zero" ? "Heads up: you would run out of cash" : "Heads up: you would dip below your safety cushion"} <Chip tone={tone}>{sh.reason.kind === "below_zero" ? "below zero" : "below cushion"}</Chip></span>}
-          right={latest ? <Btn href={`/room/case?run=${latest.runId}`}>See the options</Btn> : <Btn onClick={check} busy={busy}>Ask your assistant for options</Btn>}>
-          <p className="text-sm">
-            Lowest balance <b className="num">{money(sh.reason.minBalanceMinor, cur)}</b> in {week(sh.reason.minBalanceWeek)}.
-            {sh.reason.firstNegativeWeek && <> First below zero in {week(sh.reason.firstNegativeWeek)}.</>} You would be short of your cushion by <b className="num">{money(sh.reason.shortfallMinor, cur)}</b>.
-          </p>
-          <p className="mt-1 text-xs text-ink-soft">Worked out from your own numbers, not guessed. Your assistant can only suggest. Nothing happens until you approve.</p>
-        </Card>
-      ) : (
-        <Card tone="good" title={<span className="flex items-center gap-2">No shortage in the next 20 weeks <Chip tone="good">healthy</Chip></span>}>
-          <p className="text-sm text-ink-soft">Your projected balance stays above your reserve. {room.commitments.length === 0 ? "Add a purchase order or a supplier quote and the check runs again." : ""}</p>
-        </Card>
-      )}
+      <CashPicture room={room} cur={cur} latestRunId={latest?.runId ?? null} busy={busy} onAsk={check} />
+      {biz && <AskCash biz={biz} />}
 
-      {sh.shortage && room.drivers?.length > 0 && (
-        <Card title="What is causing the gap" subtitle="Each item taken out on its own, and how much higher your lowest point would be without it.">
-          <ul className="divide-y divide-line text-sm">
-            {room.drivers.map((d: any) => (
-              <li key={d.label} className="flex items-center justify-between gap-3 py-2"><span>{d.label}</span><span className="num font-medium text-good">+{money(d.effectMinor, cur)}</span></li>
-            ))}
-          </ul>
-        </Card>
-      )}
       {room.commitments.length === 0 && cases.length === 0 && (
         <Card title="How Ledgerhand works" subtitle="Four steps. You stay in charge of every one that matters.">
           <ol className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
