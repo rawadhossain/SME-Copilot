@@ -59,6 +59,7 @@ export const ACTION_EVENTS = {
   DEMO_CLONE_CREATED: "demo.clone_created",
   EVIDENCE_EXPORTED: "evidence.exported",
   FUNDING_OFFERS_SAVED: "funding.offers_saved",
+  FUNDING_DECISION_MADE: "funding.decision_made",
   LEDGER_DOCUMENT_CREATED: "ledger.document_created",
   LEDGER_DOCUMENT_UPDATED: "ledger.document_updated",
   LEDGER_DOCUMENT_VOIDED: "ledger.document_voided",
