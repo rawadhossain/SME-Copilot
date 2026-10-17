@@ -8,6 +8,7 @@ import { ExecutionPanel, ExhaustedCard, ReplanPanel, PlanTable, RunChips, Steppe
 import { EditPlanDialog } from "@/ui/case/EditPlanDialog";
 import { SignDialog } from "@/ui/case/SignDialog";
 import { Btn, Card, Chip, Empty, ErrorNote, Loading } from "@/ui/kit";
+import { OutcomeSummary } from "@/ui/rescue";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 
@@ -100,13 +101,17 @@ function Case() {
   const verified = auths.some((a) => a.execution?.status === "completed");
   const vfail = auths.some((a) => a.execution?.status === "verification_failed");
   const lastRun = runs.at(-1);
+  const lastExec = auths.at(-1)?.execution?.status;
+  const haltedClean = lastExec === "rolled_back";
+  const haltedUnclean = lastExec === "failed";
+  const finished = auths.some((a) => a.execution && ["completed", "verification_failed", "rolled_back", "failed"].includes(a.execution.status)) && lastRun.lifecycle !== "needs_replan";
   const stepState = (done: boolean, active: boolean, bad = false) => (bad ? "bad" : done ? "done" : active ? "active" : "todo") as "done" | "active" | "todo" | "bad";
   const steps = [
     { label: "Problem found", state: stepState(true, false) },
     { label: "Options ready", state: stepState(hasPlans, !hasPlans && run.status !== "running") },
     { label: "You approve", state: stepState(signed, (hasPlans && !signed) || !!waitingSecond) },
     { label: "Assistant acts", state: stepState(ran && !["needs_replan"].includes(lastRun.lifecycle), signed && !ran, lastRun.lifecycle === "needs_replan" || lastRun.lifecycle === "exhausted") },
-    { label: "Checked", state: stepState(verified, ran && !verified && !vfail && !["needs_replan", "exhausted"].includes(lastRun.lifecycle), vfail) },
+    { label: "Checked", state: stepState(verified, ran && !verified && !vfail && !haltedClean && !haltedUnclean && !["needs_replan", "exhausted"].includes(lastRun.lifecycle), vfail || haltedClean || haltedUnclean) },
   ];
 
   const series: Series[] = [];
@@ -124,7 +129,7 @@ function Case() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="display text-3xl">Plan: fix the cash gap</h1>
-          <p className="text-ink-soft">{reason ? <>The forecast showed {reason.kind === "below_zero" ? "you running out of cash" : "you dropping below your reserve"}: lowest <b className="num">{money(reason.minBalanceMinor, cur)}</b> in {week(reason.minBalanceWeek)}{reason.firstNegativeWeek ? `, below zero from ${week(reason.firstNegativeWeek)}` : ""}.</> : "A commitment started this case."}</p>
+          <p className="text-ink-soft">{reason ? <>The forecast showed {reason.kind === "below_zero" ? "you running out of cash" : "you dropping below your reserve"}: lowest <b className="num">{money(reason.minBalanceMinor, cur)}</b> in {week(reason.minBalanceWeek)}{reason.firstNegativeWeek ? `, below zero from ${week(reason.firstNegativeWeek)}` : ""}.</> : run.doNothing ? <>A new order or quote started this case. Doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing.minBalanceMinor, cur)}</b> in {week(run.doNothing.minBalanceWeek)}.</> : "A new order or quote started this case."}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=html`} download>Download the full record</a>
@@ -138,7 +143,7 @@ function Case() {
       <Stepper steps={steps} />
       {(() => {
         const dn = lines?.doNothing, ag = lines?.agreed;
-        const tone = verified ? "good" : vfail || isExhausted || declinedSecond ? "danger" : lastRun.lifecycle === "needs_replan" || waitingSecond ? "caution" : "accent";
+        const tone = verified ? "good" : vfail || haltedClean || haltedUnclean || isExhausted || declinedSecond ? "danger" : lastRun.lifecycle === "needs_replan" || waitingSecond ? "caution" : "accent";
         const [head, body] = verified && dn && ag
           ? ["Fixed, and checked.", `Your lowest balance goes from ${money(dn.minBalanceMinor, cur)} (doing nothing) to ${money(ag.minBalanceMinor, cur)} with the deals that were actually agreed. A separate check confirmed it.`]
           : vfail ? ["The check found a mismatch.", "What happened in the practice bank did not match what was agreed. Nothing is hidden: see the verification below."]
@@ -146,6 +151,8 @@ function Case() {
           : lastRun.lifecycle === "needs_replan" ? ["Someone said no, so your assistant needs to try again.", "Tell it to re-plan: it will avoid what was refused and come back with new options."]
           : waitingSecond ? ["Waiting for a second approver.", `You have confirmed this plan. Because it involves large payments, a different approver must sign in as themselves and confirm it too. Nothing is sent or paid until they do.${session?.user.role === "owner" ? "" : " Open Approvals to confirm it."}`]
           : declinedSecond ? ["The second approver declined this plan.", "Nothing was sent or paid. Adjust the terms or choose another plan, and sign again."]
+          : haltedClean ? ["The plan could not finish, so it was rolled back.", "Everything that had been agreed or scheduled was withdrawn, so nothing is left half-done. Read what happened below. You can choose an option and sign again: a fresh signature is needed."]
+          : haltedUnclean ? ["The plan failed and the roll-back was not complete.", "Do not assume nothing was left behind. Download the evidence below and check the practice bank before doing anything else."]
           : signed && !ran ? ["You approved a plan. Now let your assistant carry it out.", "It will negotiate and act, but every step must pass your limits first."]
           : hasPlans ? ["Your assistant found ways to fix this. Pick one.", "Compare the options below. Nothing is sent to anyone until you review and sign one: signing is what gives your assistant permission, and only within the limits shown."]
           : ["Your assistant is working on it.", "It reads your numbers and searches for combinations of fixes."];
@@ -159,25 +166,49 @@ function Case() {
         </div>
       )}
 
+      {auths.filter((a) => a.execution && ["completed", "verification_failed", "failed", "rolled_back"].includes(a.execution.status)).map((a) => (
+        <OutcomeSummary key={`o-${a.authorisation.id}`} auth={a} reason={data.runs[0]?.trigger?.reason ?? null} doNothing={lines?.doNothing ?? null} agreed={lines?.agreed ?? null} reserveMinor={lines?.reserveMinor ?? null} cur={cur} exportBase={`/api/business/${biz}/cases/${rootId}/export`} />
+      ))}
+      {isExhausted && <ExhaustedCard run={run} last={exhausted?.bestOption?.plan ?? lastAttempted} cur={cur} />}
       <details className="group rounded-2xl border border-line bg-panel"><summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-ink-soft">Show how the assistant worked it out ({run.timeline.length} steps)</summary>
       <Card title="How the assistant worked it out" subtitle={`Round ${run.round}${run.round > 0 ? " · re-plan with learned constraints" : ""} · started ${new Date(run.startedAt).toLocaleTimeString("en-GB")}`} right={<RunChips run={run} />}>
         <Timeline run={run} />
         {run.constraints?.length > 0 && <p className="mt-3 text-xs text-ink-soft">This round respected {run.constraints.length} structured constraint{run.constraints.length === 1 ? "" : "s"} learned from customers, suppliers and lenders.</p>}
       </Card></details>
 
+      {((finished && !haltedClean) || isExhausted) && run.plans.length > 0 ? (
+        <details className="rounded-2xl border border-line bg-panel"><summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-ink-soft">Show the options that were compared</summary><div className="space-y-6 p-3">
+        {run.plans.length === 0 ? (
+          run.status === "running" ? <Loading label="Your assistant is searching for plans" /> : <Empty title="No plans were proposed">{run.error ?? "No plan fits the limits you signed and what the other side has said."}</Empty>
+        ) : (
+          <>
+            <Card title="Your options, compared with doing nothing" subtitle="Every number is calculated by fixed code, not written by the AI.">
+              <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} reserveMinor={lines?.reserveMinor ?? null} onSign={(id) => setSignPlan(id)} onEdit={(id) => setEditPlanId(id)} canSign={session?.user.role === "owner" && run.id === lastRun.id && !runAuths.some((a) => ["authorised", "awaiting_second"].includes(a.authorisation.status) || (a.authorisation.status === "used" && a.execution?.status !== "rolled_back")) && !isExhausted} />
+            </Card>
+            <Card title="What each choice would do to your cash" subtitle="A simulation from fixed code: nothing has been sent or changed. The grey dashed line is doing nothing.">
+              {lines ? <Chart series={series} reserveMinor={lines.reserveMinor} currency={cur} /> : <Loading />}
+            </Card>
+          </>
+        )}
+  
+          </div></details>
+      ) : (
+      <>
       {run.plans.length === 0 ? (
         run.status === "running" ? <Loading label="Your assistant is searching for plans" /> : <Empty title="No plans were proposed">{run.error ?? "No plan fits the limits you signed and what the other side has said."}</Empty>
       ) : (
         <>
           <Card title="Your options, compared with doing nothing" subtitle="Every number is calculated by fixed code, not written by the AI.">
-            <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} onSign={(id) => setSignPlan(id)} onEdit={(id) => setEditPlanId(id)} canSign={session?.user.role === "owner" && run.id === lastRun.id && !runAuths.some((a) => ["authorised", "used", "awaiting_second"].includes(a.authorisation.status)) && !isExhausted} />
+            <PlanTable run={run} names={names} cur={cur} selected={selected ?? run.plans[0].id} onSelect={setSelected} reserveMinor={lines?.reserveMinor ?? null} onSign={(id) => setSignPlan(id)} onEdit={(id) => setEditPlanId(id)} canSign={session?.user.role === "owner" && run.id === lastRun.id && !runAuths.some((a) => ["authorised", "awaiting_second"].includes(a.authorisation.status) || (a.authorisation.status === "used" && a.execution?.status !== "rolled_back")) && !isExhausted} />
           </Card>
-          <Card title="What each choice does to your cash" subtitle="The grey dashed line is doing nothing.">
+          <Card title="What each choice would do to your cash" subtitle="A simulation from fixed code: nothing has been sent or changed. The grey dashed line is doing nothing.">
             {lines ? <Chart series={series} reserveMinor={lines.reserveMinor} currency={cur} /> : <Loading />}
           </Card>
         </>
       )}
 
+      </>
+      )}
       {runAuths.map((a) => (
         <Card key={a.authorisation.id} title="Your approved plan in action" subtitle="Every step is checked against your limits before it happens, and checked again after.">
           <ExecutionPanel auth={a} names={names} cur={cur} busy={busy === "execute"} onExecute={() => act("execute", `/api/plan-authorisations/${a.authorisation.id}/execute`)} />
@@ -187,7 +218,6 @@ function Case() {
       {run.lifecycle === "needs_replan" && latestAuth?.execution?.status === "needs_replan" && (
         <ReplanPanel run={run} constraints={latestAuth.execution.outcome.constraints ?? []} names={names} busy={busy === "replan"} onRevise={() => setRevising(true)} onRelease={() => act("release", `/api/plan-authorisations/${latestAuth.authorisation.id}/release`)} onReplan={() => act("replan", `/api/plan-authorisations/${latestAuth.authorisation.id}/replan`, (r) => r.data?.status === "exhausted" && setExhausted(r.data))} />
       )}
-      {isExhausted && <ExhaustedCard run={run} last={exhausted?.bestOption?.plan ?? lastAttempted} cur={cur} />}
 
       {auths.filter((a) => a.execution?.verification).map((a) => (
         <Card key={`v-${a.authorisation.id}`} title="Independent check" subtitle="Done by a separate piece of code, not the one that carried out the plan." tone={a.execution.verification.ok ? "good" : "danger"}>
@@ -204,7 +234,7 @@ function Case() {
           submit={({ levers, notes, commit }) => call(`/api/plan-authorisations/${latestAuth.authorisation.id}/revise`, { levers, notes, commit })}
           onSaved={() => { setRevising(false); void loadCases(); void loadCase(); }} />
       )}
-      {signPlan && <SignDialog open onClose={() => setSignPlan(null)} runId={run.id} planId={signPlan} onSigned={() => { setSignPlan(null); void loadCases(); void loadCase(); }} />}
+      {signPlan && <SignDialog open onClose={() => setSignPlan(null)} runId={run.id} planId={signPlan} plan={run.plans.find((x: any) => x.id === signPlan)?.plan ?? null} doNothing={run.doNothing} reserveMinor={lines?.reserveMinor ?? null} cur={cur} onSigned={() => { setSignPlan(null); void loadCases(); void loadCase(); }} />}
       {!signed && hasPlans && !isExhausted && <p className="text-center text-sm text-ink-soft">Nothing has been sent to anyone. <Chip tone="neutral">waiting for your signature</Chip></p>}
     </div>
   );

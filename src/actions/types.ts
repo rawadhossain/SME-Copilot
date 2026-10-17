@@ -29,6 +29,7 @@ export const ACTION_EVENTS = {
   PLAN_EDITED: "plan.edited",
   PLAN_EDIT_ASSISTED: "plan.edit_assisted",
   PLAN_LETTER_ASSISTED: "plan.letter_assisted",
+  CASH_QUESTION_ASKED: "cash.question_asked",
   PLAN_AUTHORISATION_PROPOSED: "plan.authorisation_proposed",
   PLAN_AUTHORISATION_DENIED: "plan.authorisation_denied",
   PLAN_AUTHORISED: "plan.authorised",

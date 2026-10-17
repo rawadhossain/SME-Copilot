@@ -3,6 +3,7 @@
 // Presentational parts of the shortage case: stepper, planner timeline, plan comparison, execution, re-plan and verification.
 import { useState } from "react";
 import { Btn, Card, Chip, Th, type Tone } from "../kit";
+import { planLabel } from "./plan-label";
 import { constraintText, date, dateTime, leverText, money, pct, week } from "../format";
 
 export const nameOf = (names: Record<string, string>, id: string) => (names[id] ?? "the other side").replace(" (SYNTHETIC)", "");
@@ -70,18 +71,47 @@ export function Timeline({ run }: { run: any }) {
 }
 
 // ---------------------------------------------------------------- plan comparison
-export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit, canSign }: { run: any; names: Record<string, string>; cur: string; selected: string | null; onSelect: (id: string) => void; onSign: (id: string) => void; onEdit: (id: string) => void; canSign: boolean }) {
+export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit, canSign, reserveMinor = null }: { run: any; names: Record<string, string>; cur: string; selected: string | null; onSelect: (id: string) => void; onSign: (id: string) => void; onEdit: (id: string) => void; canSign: boolean; reserveMinor?: string | null }) {
   const dn = run.doNothing;
   const rows: { label: string; dn: React.ReactNode; get: (p: any) => React.ReactNode }[] = [
     { label: "Lowest balance", dn: dn ? <span className={`num ${BigInt(dn.minBalanceMinor) < 0n ? "text-danger" : ""}`}>{money(dn.minBalanceMinor, cur)}</span> : "–", get: (p) => <span className={`num ${BigInt(p.metrics.minBalanceMinor) < 0n ? "text-danger" : "text-good"}`}>{money(p.metrics.minBalanceMinor, cur)} <span className="text-xs text-ink-soft">({week(p.metrics.minBalanceWeek)})</span></span> },
+    ...(reserveMinor !== null ? [{ label: "Keeps your safety cushion?", dn: dn ? (BigInt(dn.minBalanceMinor) >= BigInt(reserveMinor) ? <Chip tone="good">yes</Chip> : <Chip tone="danger">no, short by {money((BigInt(reserveMinor) - BigInt(dn.minBalanceMinor)).toString(), cur)}</Chip>) : "–",
+      get: (p: any) => (BigInt(p.metrics.minBalanceMinor) >= BigInt(reserveMinor) ? <Chip tone="good">yes</Chip> : <Chip tone="caution">no, short by {money((BigInt(reserveMinor) - BigInt(p.metrics.minBalanceMinor)).toString(), cur)}</Chip>) }] : []),
     { label: "Weeks below zero", dn: dn ? dn.weeksBelowZero ?? (dn.firstNegativeWeek ? "some" : 0) : "–", get: (p) => (p.metrics.weeksBelowZero ?? (p.metrics.firstNegativeWeek ? "some" : 0)) },
     { label: "First negative week", dn: dn ? week(dn.firstNegativeWeek) : "–", get: (p) => week(p.metrics.firstNegativeWeek) },
-    { label: "Total cost", dn: money("0", cur), get: (p) => <span className="num">{money(p.metrics.totalCostMinor, cur)}</span> },
+    { label: "Total cost (fees and discounts)", dn: money("0", cur), get: (p) => <span className="num">{money(p.metrics.totalCostMinor, cur)}</span> },
     { label: "Closing balance", dn: dn ? <span className="num">{money(dn.closingAtHorizonMinor, cur)}</span> : "–", get: (p) => <span className="num">{money(p.metrics.closingAtHorizonMinor, cur)}</span> },
     { label: "Who it will talk to", dn: "none", get: (p) => `${p.metrics.counterpartiesNeeded}: ${[...new Set(p.levers.map((l: any) => nameOf(names, l.counterpartyId)))].join(", ")}` },
   ];
+  const buttons = (p: any) => (
+    <div className="flex flex-col gap-2">
+      {canSign && (p.plan.blockers?.length ? <Btn variant="secondary" disabled title="A payment these terms imply would break your signed limits. Use Adjust terms to fix it.">Cannot be signed as it is</Btn> : <Btn onClick={() => onSign(p.id)}>Review and sign</Btn>)}
+      <Btn variant="secondary" onClick={() => onSelect(p.id)} aria-pressed={selected === p.id}>{selected === p.id ? "Shown on the chart" : "Show on the chart"}</Btn>
+      {canSign && <Btn variant="ghost" onClick={() => onEdit(p.id)}>Adjust terms…</Btn>}
+    </div>
+  );
   return (
-    <div className="overflow-x-auto">
+    <div>
+      {/* Phone: one card per plan instead of a table that has to be scrolled sideways. Same data as the table below. */}
+      <div className="space-y-4 md:hidden">
+        <div className="rounded-xl border border-line bg-white/60 p-3 text-sm"><p className="text-xs uppercase tracking-wide text-ink-soft">Baseline</p><p className="display">Do nothing</p>
+          <p className="mt-1 text-ink-soft">Lowest balance {dn ? <span className={`num ${BigInt(dn.minBalanceMinor) < 0n ? "text-danger" : ""}`}>{money(dn.minBalanceMinor, cur)}</span> : "–"} in {week(dn?.minBalanceWeek)}.</p></div>
+        {run.plans.map((p: any, i: number) => (
+          <article key={p.id} aria-label={`Plan ${i + 1}`} className={`rounded-xl border p-3 text-sm ${selected === p.id ? "border-accent bg-accent-soft/40" : "border-line bg-white/60"}`}>
+            <p className="text-xs uppercase tracking-wide text-ink-soft">{planLabel(p.plan, i, reserveMinor)}</p><h3 className="display">Plan {i + 1}</h3>
+            <ul className="mt-2 space-y-1">{p.plan.levers.map((l: any, k: number) => <li key={k}>{leverText(l, nameOf(names, l.counterpartyId))}</li>)}</ul>
+            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+              {rows.filter((r) => ["Lowest balance", "Keeps your safety cushion?", "Total cost (fees and discounts)", "Who it will talk to"].includes(r.label)).map((r) => (
+                <div key={r.label} className={r.label === "Who it will talk to" ? "col-span-2" : ""}><dt className="text-xs text-ink-soft">{r.label}</dt><dd>{r.get(p.plan)}</dd></div>
+              ))}
+            </dl>
+            <div className="mt-2">{(p.plan.checks ?? []).some((c: any) => c.decision === "deny") ? <Chip tone="danger">blocked by your limits</Chip> : <Chip tone="good">within your limits</Chip>}</div>
+            {(p.plan.warnings ?? []).map((w: string, k: number) => <p key={k} className="mt-2 text-xs text-caution">▲ {w}</p>)}
+            <div className="mt-3">{buttons(p)}</div>
+          </article>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto md:block">
       <table className="w-full min-w-[640px] text-sm">
         <thead>
           <tr className="align-bottom">
@@ -89,7 +119,7 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
             <th scope="col" className="px-2 pb-2 text-left"><span className="block text-xs uppercase tracking-wide text-ink-soft">Baseline</span><span className="display">Do nothing</span></th>
             {run.plans.map((p: any, i: number) => (
               <th key={p.id} scope="col" className={`px-2 pb-2 text-left ${selected === p.id ? "bg-accent-soft/50" : ""}`}>
-                <span className="block text-xs uppercase tracking-wide text-ink-soft">{p.plan.source === "owner" ? "Your edit" : i === 0 ? "Recommended" : `Alternative ${i}`}</span><span className="display">Plan {i + 1}</span>
+                <span className="block text-xs uppercase tracking-wide text-ink-soft">{planLabel(p.plan, i, reserveMinor)}</span><span className="display">Plan {i + 1}</span>
               </th>
             ))}
           </tr>
@@ -127,18 +157,19 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
             {run.plans.map((p: any) => (
               <td key={p.id} className="px-2 py-3">
                 <div className="flex flex-col gap-2">
-                  <Btn variant={selected === p.id ? "primary" : "secondary"} onClick={() => onSelect(p.id)} aria-pressed={selected === p.id}>{selected === p.id ? "Shown on the chart" : "Show on the chart"}</Btn>
+                  {canSign && (p.plan.blockers?.length ? <Btn variant="secondary" disabled title="A payment these terms imply would break your signed limits. Use Adjust terms to fix it.">Cannot be signed as it is</Btn> : <Btn onClick={() => onSign(p.id)}>Review and sign</Btn>)}
+                  <Btn variant="secondary" onClick={() => onSelect(p.id)} aria-pressed={selected === p.id}>{selected === p.id ? "Shown on the chart" : "Show on the chart"}</Btn>
                   {canSign && <Btn variant="ghost" onClick={() => onEdit(p.id)}>Adjust terms…</Btn>}
-                  {canSign && (p.plan.blockers?.length ? <Btn variant="ghost" disabled title="A payment these terms imply would break your signed limits. Use Adjust terms to fix it.">Cannot be signed as it is</Btn> : <Btn variant="ghost" onClick={() => onSign(p.id)}>Review and sign…</Btn>)}
                 </div>
               </td>
             ))}</tr>
         </tbody>
       </table>
+      </div>
       {run.plans.map((p: any, i: number) => selected === p.id && (
         <div key={p.id} className="mt-4 rounded-xl border border-line bg-white/60 p-4 text-sm">
           <p className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-soft">Assistant&apos;s explanation of plan {i + 1} <Chip tone="neutral">{p.plan.source === "owner" ? "adjusted by you; every number is recomputed by the engine" : `written by the ${p.plan.source === "ai" ? "AI" : "planner"}; numbers are not taken from it`}</Chip></p>
-          <p className="font-medium">{p.plan.title}</p><p className="text-ink-soft">{p.plan.rationale}</p>
+          <p className="text-ink-soft">{p.plan.rationale}</p>
           <details className="mt-2"><summary className="cursor-pointer text-xs text-accent">Assumptions</summary><ul className="mt-1 list-disc pl-5 text-xs text-ink-soft">{(p.plan.assumptions ?? []).map((a: string, k: number) => <li key={k}>{a}</li>)}</ul></details>
         </div>
       ))}
@@ -196,7 +227,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
         </details>
       )}
       {out?.branches?.length > 0 && (
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[34rem] text-sm">
           <thead><tr><Th>Who</Th><Th>What we asked</Th><Th>Answer</Th><Th>Terms</Th></tr></thead>
           <tbody>
             {out.branches.map((b: any) => { const [label, tone] = branchState(b); return (
@@ -207,7 +238,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
                 <td className="num text-xs">{b.agreedTerms ? Object.entries(b.agreedTerms).map(([k, v]) => `${k.replace(/Bps$/, "")}: ${k.endsWith("Bps") ? pct(Number(v)) : String(v)}`).join(", ") : b.offer ? `advance ${pct(b.offer.advanceBps)}, fee ${pct(b.offer.feeBps)}` : "–"}</td>
               </tr>); })}
           </tbody>
-        </table>
+        </table></div>
       )}
       {out?.scheduled?.length > 0 && (
         <div>
@@ -221,7 +252,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
       {auth.actions?.length > 0 && (
         <details>
           <summary className="cursor-pointer text-sm text-accent">Every action ({auth.actions.length}): safety check, execution, verification</summary>
-          <table className="mt-2 w-full text-sm">
+          <div className="overflow-x-auto"><table className="mt-2 w-full min-w-[30rem] text-sm">
             <thead><tr><Th>Action</Th><Th>Safety check</Th><Th>Status</Th></tr></thead>
             <tbody>
               {auth.actions.map((x: any) => (
@@ -230,7 +261,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
                   <td><Chip tone={x.status === "verified" ? "good" : x.status === "executed" ? "accent" : x.status === "failed" || x.status === "denied" ? "danger" : "neutral"}>{x.status}</Chip></td></tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </details>
       )}
     </div>
@@ -278,7 +309,7 @@ export function VerificationPanel({ v, cur }: { v: any; cur: string }) {
       </div>
       <div>
         <h4 className="mb-1 text-sm font-medium">Promised → agreed terms → actual</h4>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[34rem] text-sm">
           <thead><tr><Th>Measure</Th><Th right>Plan promised</Th><Th right>Agreed terms give</Th><Th right>Recomputed from the practice bank</Th><Th>Check</Th></tr></thead>
           <tbody>
             {v.metrics.map((m: any, i: number) => { const p = v.promiseVsAgreed?.metrics?.[i]; return (
@@ -290,7 +321,7 @@ export function VerificationPanel({ v, cur }: { v: any; cur: string }) {
                 <td><Chip tone={m.ok ? "good" : "danger"}>{m.ok ? "match" : `differs by ${m.kind === "money" ? money(m.difference, cur) : m.difference}`}</Chip></td>
               </tr>); })}
           </tbody>
-        </table>
+        </table></div>
       </div>
       {v.promiseVsAgreed && <p className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm"><Chip tone={dir === "worse" ? "caution" : dir === "better" ? "good" : "neutral"}>{dir === "same" ? "as planned" : dir}</Chip> <span className="ml-1">{v.promiseVsAgreed.label}</span></p>}
       <p className="text-sm text-ink-soft">Scheduled payments and receipts: {v.schedule.found} of {v.schedule.expected} found, {v.schedule.ok ? "all as the agreed terms imply" : "PROBLEM: " + v.schedule.problems.join("; ")}.</p>

@@ -21,7 +21,7 @@ export function Card({ title, subtitle, right, children, tone, className = "" }:
   return (
     <section className={`rounded-2xl border ${border} bg-panel p-5 shadow-[0_1px_0_rgba(22,32,30,0.04)] ${className}`}>
       {(title || right) && (
-        <header className="mb-3 flex items-start justify-between gap-3">
+        <header className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div><h2 className="display text-lg text-ink">{title}</h2>{subtitle && <p className="text-sm text-ink-soft">{subtitle}</p>}</div>
           {right}
         </header>

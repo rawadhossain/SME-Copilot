@@ -8,6 +8,7 @@ export { deterministicPlans } from "./fallback";
 export { guardRanking, demoteBlocked } from "./guard";
 export { buildPlanView, doNothingSummary, leverBounds, leverProblems, dryRun, describeLever } from "./plan-builder";
 export { ASSIST_PURPOSE, assistOutputSchema, buildAssistMessages, applyEdits, ruleEdits, type AssistChange, type AssistCounterparty } from "./edit-assist";
+export { CASH_ASK_PURPOSE, askOutputSchema, buildAskMessages, classify as classifyQuestion, ruleAnswer, detailLines, SUGGESTIONS as ASK_SUGGESTIONS, type AskFacts, type AskPlanFact, type AskOutput, type AskIntent } from "./cash-ask";
 export { LETTER_ASSIST_PURPOSE, letterRewriteSchema, buildLetterRewriteMessages, ruleRewrite, type LetterRewrite } from "./letter-assist";
 export { checkProse, collectNumbers, claimsIn } from "./prose";
 import "./scripted";
