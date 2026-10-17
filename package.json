@@ -29,6 +29,7 @@
     "check:plan": "bun --env-file=.env scripts/plan-sanity.ts",
     "check:ledger": "bun --env-file=.env scripts/ledger-sanity.ts",
     "check:rescue": "bun --env-file=.env scripts/rescue-sanity.ts",
+    "check:insights": "bun --env-file=.env scripts/insights-sanity.ts",
     "test:browser": "bun --env-file=.env scripts/browser-journey.ts",
     "ask:live": "bun --env-file=.env scripts/ask-live.ts",
     "mandate:v2": "bun --env-file=.env scripts/mandate-v2.ts",

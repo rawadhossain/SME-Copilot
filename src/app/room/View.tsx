@@ -6,6 +6,7 @@ import { Btn, Card, Chip, Empty, ErrorNote, Loading, Stat, Th } from "@/ui/kit";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 import { AskCash, CashPicture, weekWithDates } from "@/ui/rescue";
+import { FinancialHealth } from "@/ui/insights";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function CashDesk() {
@@ -71,6 +72,7 @@ export default function CashDesk() {
       {running && <Card tone="accent" title={<span className="flex items-center gap-2">Your assistant is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft" role="status">It is reading your books and searching for plans. Open Plans to watch it work.</p></Card>}
 
       <CashPicture room={room} cur={cur} latestRunId={latest?.runId ?? null} busy={busy} onAsk={check} />
+      {biz && <FinancialHealth biz={biz} cur={cur} busy={busy} latestRunId={latest?.runId ?? null} onPlanSearch={check} />}
       {biz && <AskCash biz={biz} />}
 
       {room.commitments.length === 0 && cases.length === 0 && (
