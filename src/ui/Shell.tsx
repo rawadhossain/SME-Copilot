@@ -8,6 +8,7 @@ import { SessionProvider, call, useSession } from "./session";
 
 const NAV = [
   { href: "/room", label: "Today" },
+  { href: "/room/invoices", label: "Invoices & bills" },
   { href: "/room/commitments", label: "Orders & quotes" },
   { href: "/room/case", label: "Plans" },
   { href: "/room/funding", label: "Funding" },

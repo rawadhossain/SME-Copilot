@@ -120,6 +120,14 @@ async function main() {
     // ================= 1. Happy path + idempotency/replay =================
     const A = await setup("A");
     const planA = await A.addPlan(lever3(A));
+    // The signing review lists every payment and receipt (date, who, amount) BEFORE signing, from the signed terms; the executor must later schedule exactly those.
+    const { previewAuthorisation } = await import("../src/actions/plan-authorise");
+    const review = (await previewAuthorisation(db, A.biz.id, { runId: A.runId, confirmations: 2, planId: planA.id })) as unknown as { summary: { schedule: { direction: string; date: string; amountMinor: string; counterpartyId: string; purpose: string; counterparty: string }[]; fees: { maxFeeMinor: string; maxFeeBps: number }[]; scheduleNetMinor: string; scheduleProblem: string | null } };
+    assert.equal(review.summary.scheduleProblem, null);
+    assert.ok(review.summary.schedule.length === 4 && review.summary.schedule.every((i) => i.counterparty && i.purpose && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(i.date)), "every scheduled item names who, what, when and how much");
+    assert.equal(review.summary.fees.length, 1, "the finance cost is shown in money");
+    assert.equal(BigInt(review.summary.scheduleNetMinor), review.summary.schedule.reduce((n, i) => n + (i.direction === "receipt" ? BigInt(i.amountMinor) : -BigInt(i.amountMinor)), 0n), "the net line is the sum of the items");
+    await assert.rejects(previewAuthorisation(db, A.biz.id, { runId: A.runId, confirmations: 2, planId: "nope" }), /Unknown plan/, "a review of a plan that does not exist is refused");
     const auth = await authorisePlan(db, A.biz.id, { runId: A.runId, confirmations: 2, planId: planA.id }, "Test Owner");
     assert.equal(auth.status, "authorised");
     const before = await sandboxCounts(A.biz.id);
@@ -131,6 +139,12 @@ async function main() {
     // Section 1 (happy): payments AND receipts are scheduled through the gate, and the forecast-aware gate allowed the GBP 76,800 balance payment.
     assert.deepEqual(run1.outcome.scheduled.map((x) => x.kind).sort(), ["payment", "payment", "receipt", "receipt"]);
     assert.ok(run1.outcome.scheduled.some((x) => x.kind === "payment" && x.amountMinor === "7680000"), "the GBP 76,800 balance payment was scheduled");
+    {
+      const shown = review.summary.schedule.map((i) => `${i.direction}|${i.date}|${i.amountMinor}`).sort();
+      const ran = run1.outcome.scheduled.map((x) => `${x.kind}|${x.date}|${x.amountMinor}`).sort();
+      assert.deepEqual(shown, ran, "what the signing review showed is exactly what the executor scheduled (direction, date, amount)");
+      console.log(`  15 signing review: ${shown.length} items listed before signing equal the ${ran.length} items executed (date, direction, amount); net and finance fee shown; unknown plan refused`);
+    }
     const view = (await getPlanAuthorisation(db, auth.authorisationId)) as { authorisation: { status: string; integrity: string }; actions: { kind: string; status: string }[]; trail: { event: string }[] };
     assert.equal(view.authorisation.status, "used");
     assert.equal(view.authorisation.integrity, "ok");

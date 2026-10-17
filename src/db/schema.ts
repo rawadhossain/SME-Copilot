@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, date, index, integer, jsonb, pgEnum, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, date, index, integer, jsonb, pgEnum, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 // Money columns: bigint minor units (mode "bigint") with a currency column beside them,
 // referencing the currencies table. Every business-scoped table has business_id.
@@ -94,8 +94,11 @@ export const invoices = pgTable(
     currency: currency(),
     paidOn: date("paid_on"), // when the customer paid; used to learn typical lateness
     status: text("status").notNull(), // draft | sent | paid | overdue | void
+    // Set when this invoice is already counted elsewhere in the forecast ("order:pc1", "recurring:<id>", "scheduled:<id>"): tracked, not forecast twice.
+    countedIn: text("counted_in"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (t) => [index("invoices_business_due_idx").on(t.businessId, t.dueOn)],
+  (t) => [index("invoices_business_due_idx").on(t.businessId, t.dueOn), uniqueIndex("invoices_customer_number_idx").on(t.businessId, t.customerId, t.number)],
 );
 
 export const bills = pgTable(
@@ -111,8 +114,39 @@ export const bills = pgTable(
     currency: currency(),
     paidOn: date("paid_on"),
     status: text("status").notNull(), // unpaid | scheduled | paid | void
+    countedIn: text("counted_in"), // see invoices.counted_in
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (t) => [index("bills_business_due_idx").on(t.businessId, t.dueOn)],
+  (t) => [index("bills_business_due_idx").on(t.businessId, t.dueOn), uniqueIndex("bills_supplier_reference_idx").on(t.businessId, t.supplierId, t.reference)],
+);
+
+/**
+ * Payments against one invoice or one bill (partial or full). Rows are never edited or deleted: a mistake is voided (voided_at, reason) and the
+ * history stays. A payment may point at the bank transaction it is, so the same cash is not counted twice.
+ */
+export const documentPayments = pgTable(
+  "document_payments",
+  {
+    id: id(),
+    businessId: businessId(),
+    invoiceId: uuid("invoice_id").references(() => invoices.id),
+    billId: uuid("bill_id").references(() => bills.id),
+    amountMinor: minor("amount_minor").notNull(), // positive
+    currency: currency(),
+    paidOn: date("paid_on").notNull(),
+    transactionId: uuid("transaction_id").references(() => transactions.id),
+    note: text("note"),
+    createdAt: createdAt(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidReason: text("void_reason"),
+  },
+  (t) => [
+    index("document_payments_invoice_idx").on(t.invoiceId),
+    index("document_payments_bill_idx").on(t.billId),
+    index("document_payments_txn_idx").on(t.transactionId),
+    check("document_payments_one_document", sql`(${t.invoiceId} is null) <> (${t.billId} is null)`),
+    check("document_payments_positive", sql`${t.amountMinor} > 0`),
+  ],
 );
 
 export const recurringCommitments = pgTable(

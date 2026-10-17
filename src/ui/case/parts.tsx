@@ -230,7 +230,11 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
         <div className="overflow-x-auto"><table className="w-full min-w-[34rem] text-sm">
           <thead><tr><Th>Who</Th><Th>What we asked</Th><Th>Answer</Th><Th>Terms</Th></tr></thead>
           <tbody>
-            {out.branches.map((b: any) => { const [label, tone] = branchState(b); return (
+            {out.branches.map((b: any) => {
+              // After a failed run an agreement must not read as a success: say whether it was withdrawn or is STILL in place.
+              const halted = ex?.status === "failed" || ex?.status === "rolled_back";
+              const [label, tone]: [string, Tone] = halted && (b.status === "committed" || b.status === "agreed" || b.status === "offered") ? (b.withdrawn ? ["Was agreed, then withdrawn", "neutral"] : ["Still in place: not withdrawn", "danger"]) : branchState(b);
+              return (
               <tr key={b.index} className="border-t border-line align-top">
                 <td className="py-2 pr-3 font-medium">{nameOf(names, b.counterpartyId)}</td>
                 <td className="pr-3">{leverText(a.terms?.entries?.[b.index]?.lever ?? { kind: b.kind })}</td>
@@ -242,7 +246,7 @@ export function ExecutionPanel({ auth, names, cur, busy, onExecute }: { auth: an
       )}
       {out?.scheduled?.length > 0 && (
         <div>
-          <h4 className="mb-1 text-sm font-medium">Scheduled in the practice bank</h4>
+          <h4 className="mb-1 flex flex-wrap items-center gap-2 text-sm font-medium">Scheduled in the practice bank {ex?.verification?.ok === true ? <Chip tone="good">independently verified</Chip> : ex?.status === "completed" ? <Chip tone="caution">not yet verified</Chip> : <Chip tone="neutral">not verified</Chip>}</h4>
           <ul className="space-y-1 text-sm">{out.scheduled.map((s: any) => <li key={s.id} className="flex items-center gap-2"><Chip tone={s.withdrawn ? "neutral" : s.kind === "receipt" ? "good" : "accent"}>{s.kind}</Chip><span className="num">{money(s.amountMinor, cur)}</span><span className="text-ink-soft">on {date(s.date)}</span>{s.withdrawn && <span className="text-xs text-ink-soft">cancelled</span>}</li>)}</ul>
           <p className="mt-1 text-xs text-ink-soft">They stay scheduled until the bank&apos;s end-of-day job, so the whole plan can still be withdrawn.</p>
         </div>

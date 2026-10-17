@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { AgentTool } from "@/ai";
 import { leverSchema, submitPlansInputSchema, LEVER_KINDS, type Lever, type PlanView } from "@/domain/plan";
-import { attributeDrivers, buildForecast, computeLateness, medianInt, type Forecast } from "@/engine";
+import { attributeDrivers, buildForecast, computeLateness, isForecast, medianInt, type Forecast } from "@/engine";
 import { searchPlans, simulateLevers, type SearchedPlan } from "@/engine/plans";
 import { compareOffers } from "@/engine/financing";
 import { buildPlanView, baseEventsOf, doNothingSummary, dryRun, isRunnable, leverBounds, leverProblems, mandateOf } from "./plan-builder";
@@ -59,13 +59,20 @@ export function buildAgentTools(ctx: AgentToolContext): Record<string, AgentTool
       parameters: empty,
       execute: () => {
         const i = ctx.input;
-        const open = i.invoices.filter((x) => x.status === "open");
+        const open = i.invoices.filter(isForecast);
         const overdue = open.filter((x) => x.dueOn < i.asOf);
+        const openBills = i.bills.filter(isForecast);
+        const sum = (rows: { amount: bigint; outstanding?: bigint }[]) => rows.reduce((a, x) => a + (x.outstanding ?? x.amount), 0n).toString();
+        // Only present when payments were part-recorded or something is counted elsewhere, so a business without them reads exactly as before.
+        const partly = [...open, ...openBills].filter((x) => x.outstanding !== undefined && x.outstanding < x.amount);
+        const countedElsewhere = [...i.invoices, ...i.bills].filter((x) => x.status === "open" && x.countedIn).length;
         return withSeen(ctx, {
           ok: true, asOf: i.asOf, currency: i.currency, openingBalanceMinor: i.openingBalance.toString(), reserveMinor: i.reserve.toString(),
-          openInvoices: { count: open.length, totalMinor: open.reduce((a, x) => a + x.amount, 0n).toString() },
-          overdueInvoices: { count: overdue.length, totalMinor: overdue.reduce((a, x) => a + x.amount, 0n).toString() },
-          openBills: { count: i.bills.filter((x) => x.status === "open").length, totalMinor: i.bills.filter((x) => x.status === "open").reduce((a, x) => a + x.amount, 0n).toString() },
+          openInvoices: { count: open.length, totalMinor: sum(open) },
+          overdueInvoices: { count: overdue.length, totalMinor: sum(overdue) },
+          openBills: { count: openBills.length, totalMinor: sum(openBills) },
+          ...(partly.length > 0 ? { partlyPaid: { count: partly.length, unpaidMinor: sum(partly) } } : {}),
+          ...(countedElsewhere > 0 ? { countedElsewhereNotForecastTwice: countedElsewhere } : {}),
           recurringCommitments: i.commitments.map((c) => ({ name: c.name, amountMinor: c.amount.toString(), frequency: c.frequency, nextDueOn: c.nextDueOn, kind: c.kind })),
         });
       },

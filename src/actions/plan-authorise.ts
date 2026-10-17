@@ -121,7 +121,7 @@ export async function proposeAuthorisation(db: Db, businessId: string, input: un
     return {
       preview: {
         denied, problems, gates, needsSecondConfirmation: needsSecond, confirmations, runId, planId: plan.planHash,
-        summary: describeTerms(terms, names, ctx.currency), termsHash: termsHashOf(terms), leversHash: leversHashOf(levers),
+        summary: describeTerms(terms, names, ctx.currency, { baseEvents, parties: ctx.parties }), termsHash: termsHashOf(terms), leversHash: leversHashOf(levers),
         mandateVersion: mandateCheck.ok ? mandateCheck.mandate.version : null, mandateHash: mandate ? mandateHashOf(mandate.canonical) : null,
         expiresAt: new Date(new Date(`${asOf}T00:00:00Z`).getTime() + ttl * 3_600_000).toISOString(), mandateProblem: mandateCheck.ok ? null : mandateCheck.reason,
       },
@@ -245,12 +245,13 @@ export async function listAwaitingSecond(db: Db, businessId: string, viewerUserI
   const cps = await db.select({ id: counterparties.id, name: counterparties.name }).from(counterparties).where(eq(counterparties.businessId, businessId));
   const [biz] = await db.select({ c: businesses.baseCurrency }).from(businesses).where(eq(businesses.id, businessId));
   const names = Object.fromEntries(cps.map((c) => [c.id, c.name]));
+  const pctx = rows.length > 0 ? await buildContext(db, businessId, null) : null;
   return rows.map((r) => ({
     id: r.id, runId: r.runId, planId: r.planId, termsHash: r.termsHash, createdAt: r.createdAt, expiresAt: r.expiresAt, mandateVersion: r.mandateVersion,
     firstConfirmedName: r.firstConfirmedName, firstConfirmedAt: r.firstConfirmedAt,
     /** The person who gave the first confirmation cannot give the second. */
     canConfirm: r.firstConfirmedBy !== viewerUserId,
-    summary: describeTerms(r.terms as PlanTerms, names, biz?.c ?? "GBP"),
+    summary: describeTerms(r.terms as PlanTerms, names, biz?.c ?? "GBP", pctx ? { baseEvents: pctx.pending.map((p) => p.event), parties: pctx.parties } : undefined),
   }));
 }
 

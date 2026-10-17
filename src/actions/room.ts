@@ -4,7 +4,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { agentRuns, agentSteps, businesses, counterparties, plans, planAuthorisations, sandboxBankAccounts } from "@/db/schema";
 import type { Lever, PlanView } from "@/domain/plan";
-import { adjustmentsOf, applyTermChanges, attributeDrivers, buildForecast, FINANCE_FEE_BPS_ASSUMPTION, simulateLevers, type Forecast } from "@/engine";
+import { adjustmentsOf, applyTermChanges, attributeDrivers, buildForecast, FINANCE_FEE_BPS_ASSUMPTION, isForecast, owedOf, simulateLevers, addDays, type Forecast } from "@/engine";
 import { toJsonValue } from "@/sandbox/proposals";
 import { buildContext } from "./agent-run";
 import { getMandateInfo } from "./read";
@@ -19,6 +19,24 @@ const lineOf = (f: Forecast) => ({
   weeks: weeksOf(f), minBalanceMinor: f.minimum.amount.toString(), minBalanceWeek: f.minimum.weekIndex + 1,
   firstNegativeWeek: f.weeksBelowZero.length > 0 ? f.weeksBelowZero[0] + 1 : null, weeksBelowZero: f.weeksBelowZero.length, closingMinor: f.weeks[f.weeks.length - 1].closing.toString(),
 });
+
+/** What the owner could do to make the forecast firmer: plain facts from the records, nothing guessed. Pure. */
+export function dataGapsOf(i: { reserveMinor: bigint; bankMinor: bigint | null; booksMinor: bigint; lowConfidence: number }): string[] {
+  const gaps: string[] = [];
+  if (i.reserveMinor === 0n) gaps.push("No safety cushion is set, so you are only warned when cash would go below zero.");
+  if (i.bankMinor !== null && i.bankMinor !== i.booksMinor) gaps.push("The practice bank and your books show different balances. The forecast starts from your books.");
+  if (i.lowConfidence > 0) gaps.push(`${i.lowConfidence} confirmed order${i.lowConfidence === 1 ? " is" : "s are"} marked low confidence. Check its dates and amounts.`);
+  return gaps;
+}
+
+/** Invoices and bills at a glance for the Today page: what is overdue and what falls due soon. Only what the forecast still waits for. Pure. */
+export function ledgerGlance(input: { asOf: string; currency: string; invoices: Parameters<typeof isForecast>[0][]; bills: Parameters<typeof isForecast>[0][] }) {
+  const sum = (rows: Parameters<typeof owedOf>[0][]) => rows.reduce((a, r) => a + owedOf(r), 0n);
+  const inv = input.invoices.filter(isForecast);
+  const overdue = inv.filter((i) => i.dueOn < input.asOf);
+  const soon = input.bills.filter(isForecast).filter((b) => b.dueOn <= addDays(input.asOf, 14));
+  return { overdueCount: overdue.length, overdueMinor: sum(overdue), billsDueSoonCount: soon.length, billsDueSoonMinor: sum(soon), openInvoiceCount: inv.length, openInvoiceMinor: sum(inv) };
+}
 
 /** The cash desk: balance, shortage state, commitments, mandate, and the do-nothing forecast with the confirmed commitments. */
 export interface RoomOptions {
@@ -69,6 +87,8 @@ export async function getRoom(db: Db, businessId: string, opts: RoomOptions = {}
           kind: d.kind, label: d.label, effectMinor: d.effectOnMinimum.toString(), shareBps: d.shareOfShortfallBps,
           date: ev?.date ?? null, amountMinor: ev ? ev.amountMinor.toString() : null, confidence: ev?.confidence ?? null,
           invoiceCount: d.kind === "counterparty_delay" ? d.refs.length : null,
+          // The invoices behind a late-paying customer, so the owner can open them.
+          documents: d.kind === "counterparty_delay" ? d.refs.flatMap((r) => { const inv = ctx.input.invoices.find((i) => i.id === r); return inv ? [{ kind: "invoice" as const, id: inv.id, number: inv.number, counterpartyName: inv.counterpartyName }] : []; }).slice(0, 5) : [],
         };
       })
     : [];
@@ -79,19 +99,19 @@ export async function getRoom(db: Db, businessId: string, opts: RoomOptions = {}
     return { kind: k, count: rows.length, inMinor: rows.filter((r) => r.amount > 0n).reduce((a, r) => a + r.amount, 0n).toString(), outMinor: rows.filter((r) => r.amount < 0n).reduce((a, r) => a - r.amount, 0n).toString() };
   });
   const abs = (n: bigint) => (n < 0n ? -n : n);
+  const documentRef = (it: { sourceType: string; sourceId: string }) => (it.sourceType === "invoice" || it.sourceType === "bill" ? { kind: it.sourceType as "invoice" | "bill", id: it.sourceId } : null);
   const lowestWeekItems = headline.items.filter((it) => it.weekIndex === headline.minimum.weekIndex)
     .sort((a, b) => (abs(a.amount) < abs(b.amount) ? 1 : abs(a.amount) > abs(b.amount) ? -1 : 0))
-    .slice(0, 5).map((it) => ({ date: it.date, label: it.label, amountMinor: it.amount.toString(), kind: it.kind, note: it.note ?? null }));
+    .slice(0, 5).map((it) => ({ date: it.date, label: it.label, amountMinor: it.amount.toString(), kind: it.kind, note: it.note ?? null, document: documentRef(it) }));
+  // The invoices and bills that make up the money in and out up to the lowest point, biggest first, each with a link to its record.
+  const causeDocuments = upToLowest.filter((it) => it.sourceType === "invoice" || it.sourceType === "bill").sort((a, b) => (abs(a.amount) < abs(b.amount) ? 1 : abs(a.amount) > abs(b.amount) ? -1 : 0)).slice(0, 6)
+    .map((it) => ({ date: it.date, label: it.label, amountMinor: it.amount.toString(), kind: it.kind, note: it.note ?? null, document: documentRef(it) }));
   // What the owner can do to make the forecast firmer. Plain facts from the records, nothing guessed.
-  const gaps: string[] = [];
-  if (BigInt(biz.reserveMinor) === 0n) gaps.push("No safety cushion is set, so you are only warned when cash would go below zero.");
-  if (bank && BigInt(bank.balanceMinor) !== ctx.input.openingBalance) gaps.push("The practice bank and your books show different balances. The forecast starts from your books.");
-  const lowConf = ctx.pending.filter((p) => p.event.confidence === "low").length;
-  if (lowConf > 0) gaps.push(`${lowConf} confirmed order${lowConf === 1 ? " is" : "s are"} marked low confidence. Check its dates and amounts.`);
+  const gaps = dataGapsOf({ reserveMinor: BigInt(biz.reserveMinor), bankMinor: bank ? BigInt(bank.balanceMinor) : null, booksMinor: ctx.input.openingBalance, lowConfidence: ctx.pending.filter((p) => p.event.confidence === "low").length });
   const notes: string[] = [];
   if (basis[2].count > 0) notes.push("Some money is expected rather than confirmed, for example customers who usually pay after the due date. Those dates are estimates, not promises.");
   return toJsonValue({
-    drivers, basis: { throughWeek: headline.minimum.weekIndex + 1, rows: basis, lowestWeekItems }, gaps, notes,
+    drivers, causeDocuments, ledger: ledgerGlance(ctx.input), basis: { throughWeek: headline.minimum.weekIndex + 1, rows: basis, lowestWeekItems }, gaps, notes,
     business: { id: biz.id, name: biz.name, currency: biz.baseCurrency, isSynthetic: biz.isSynthetic, isTest: biz.isTest },
     asOf: ctx.asOf, reserveMinor: biz.reserveMinor,
     balances: { booksMinor: ctx.input.openingBalance, sandboxBankMinor: bank?.balanceMinor ?? null },

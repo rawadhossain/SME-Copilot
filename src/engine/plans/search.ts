@@ -4,6 +4,7 @@
 import type { CommitmentEvent } from "@/domain/commitment-event";
 import type { Constraint } from "@/domain/constraints";
 import type { Lever, LeverKind } from "@/domain/plan";
+import { isForecast } from "../open";
 import type { EngineInput } from "../types";
 import type { Parties } from "./parties";
 import { doNothing, simulateLevers, type SimResult } from "./simulate";
@@ -51,11 +52,11 @@ export const EARLY_PAYMENT_GRID: { daysEarly: number; discountBps: number }[] = 
 
 /** Customers with open invoices past their due date (chase candidates), by id. */
 export function overdueBuyers(input: EngineInput): string[] {
-  return byName(input, input.invoices.filter((i) => i.status === "open" && i.dueOn < input.asOf));
+  return byName(input, input.invoices.filter((i) => isForecast(i) && i.dueOn < input.asOf));
 }
 /** Customers with open invoices not yet due (early-payment candidates), by id. */
 export function earlyPaymentBuyers(input: EngineInput): string[] {
-  return byName(input, input.invoices.filter((i) => i.status === "open" && i.dueOn >= input.asOf));
+  return byName(input, input.invoices.filter((i) => isForecast(i) && i.dueOn >= input.asOf));
 }
 /** Distinct customer ids in NAME order (then id), so the search order does not depend on random ids. */
 function byName(_input: EngineInput, rows: { counterpartyId: string; counterpartyName: string }[]): string[] {

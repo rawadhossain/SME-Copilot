@@ -2,6 +2,8 @@
 // and signed, so the words on the signing screen cannot drift from the signed bytes. All numbers come from the terms.
 import { formatMoney, money } from "@/lib/money";
 import { requestSchema } from "@/gate/request";
+import type { CommitmentEvent } from "@/domain/commitment-event";
+import { projectPlan, type ProjectedFee, type ProjectedItem } from "./plan-projection";
 import type { PlanTerms } from "./plan-terms";
 
 const pct = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}%`;
@@ -14,9 +16,17 @@ export interface SigningSummary {
   /** What the system will NOT do. */
   never: string[];
   confirmations: 1 | 2;
+  /** The payments and receipts the plan would schedule if every term is accepted exactly as asked (proposed, not agreed). Present when the confirmed order is known. */
+  schedule?: (ProjectedItem & { counterparty: string })[];
+  /** The highest finance fee the signed terms allow, in money. */
+  fees?: (ProjectedFee & { counterparty: string })[];
+  /** Receipts less payments among the scheduled items (signed minor units, string). */
+  scheduleNetMinor?: string;
+  /** Set when the terms could not be applied to the confirmed order. */
+  scheduleProblem?: string | null;
 }
 
-export function describeTerms(terms: PlanTerms, names: Record<string, string>, currency: string): SigningSummary {
+export function describeTerms(terms: PlanTerms, names: Record<string, string>, currency: string, ctx?: { baseEvents: CommitmentEvent[]; parties: { supplierId: string | null; buyerId: string | null; lenderId: string | null } }): SigningSummary {
   const gbp = (minor: bigint | string) => formatMoney(money(BigInt(minor), currency), 2);
   const asks: SigningSummary["asks"] = [];
   for (const e of terms.entries) {
@@ -53,8 +63,11 @@ export function describeTerms(terms: PlanTerms, names: Record<string, string>, c
     }
   }
   const usesSupplier = terms.entries.some((e) => e.lever.kind === "supplier_reduce_deposit" || e.lever.kind === "supplier_defer_balance");
+  const projection = ctx ? projectPlan(terms, ctx.baseEvents, ctx.parties) : null;
+  const nameOf = (id: string) => names[id] ?? "the other side";
   return {
     asks,
+    ...(projection ? { schedule: projection.items.map((i) => ({ ...i, counterparty: nameOf(i.counterpartyId) })), fees: projection.fees.map((f) => ({ ...f, counterparty: nameOf(f.counterpartyId) })), scheduleNetMinor: projection.netMinor, scheduleProblem: projection.problem } : {}),
     then: [
       "Anything outside the accepted terms stops the plan: nothing is committed or paid, the agreements already reached are kept on hold, and you decide whether to revise the terms, ask for a re-plan or withdraw everything.",
       "If everyone agrees, the system schedules only the payments and receipts those exact terms imply, each one checked again against your signed limits and your projected balance.",
