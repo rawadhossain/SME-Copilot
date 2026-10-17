@@ -8,6 +8,7 @@ import { call, useSession } from "@/ui/session";
 import { AskCash, CashPicture, weekWithDates } from "@/ui/rescue";
 import { FinancialHealth } from "@/ui/insights";
 import { AlertsPanel } from "@/ui/alerts";
+import { BusinessAnalysis } from "@/ui/analysis";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function CashDesk() {
@@ -76,6 +77,8 @@ export default function CashDesk() {
 
       <CashPicture room={room} cur={cur} latestRunId={latest?.runId ?? null} busy={busy} onAsk={check} />
       {biz && <FinancialHealth biz={biz} cur={cur} busy={busy} latestRunId={latest?.runId ?? null} onPlanSearch={check} />}
+
+      <BusinessAnalysis />
       {biz && <AskCash biz={biz} />}
 
       {room.commitments.length === 0 && cases.length === 0 && (
