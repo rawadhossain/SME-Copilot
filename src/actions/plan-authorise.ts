@@ -64,6 +64,7 @@ export async function proposeAuthorisation(db: Db, businessId: string, input: un
   const { runId, planId: planHash, tolerances, ttlHours, confirmations, letters, signatureImage } = authoriseInputSchema.parse(input);
   const [run] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.businessId, businessId)));
   if (!run) throw new ActionError("not_found", "Unknown agent run for this business");
+  if (run.lifecycle === "superseded") throw new ActionError("conflict", "This plan was replaced by a newer one after the facts changed; review the newer plan instead");
   const [plan] = await db.select().from(plans).where(and(eq(plans.businessId, businessId), eq(plans.runId, runId), eq(plans.planHash, planHash)));
   if (!plan) throw new ActionError("not_found", "Unknown plan in this run");
   const parsedLevers = z.array(leverSchema).safeParse((plan.plan as { levers?: unknown }).levers);

@@ -4,7 +4,7 @@ import type { CommitmentEvent } from "@/domain/commitment-event";
 import type { Constraint } from "@/domain/constraints";
 import type { FinancingOffer } from "@/domain/financing-offer";
 import type { ShortageReason } from "@/domain/shortage";
-import type { PlanView } from "@/domain/plan";
+import type { Lever, PlanView } from "@/domain/plan";
 import type { EngineInput } from "@/engine";
 import type { Parties } from "@/engine/plans/parties";
 import type { GateState, SignedMandate } from "@/gate";
@@ -44,6 +44,8 @@ export interface AgentToolContext {
   constraints: Constraint[];
   /** Set when the run was started by the shortage detector: the structured reason (numbers only). */
   shortage: ShortageReason | null;
+  /** Recovery planning only: levers that cannot be proposed because the earlier strategy still has this counterparty's term in force. Never a counterparty refusal. */
+  unavailable?: { kind: Lever["kind"]; counterpartyId: string | null; why: string }[];
   /** Finance fee assumed when planning (basis points of the invoice). */
   financeFeeBps: number;
   /** Funding offers the owner saved (typed by the owner, validated by code). Absent or empty = the tool is not offered to the model. */

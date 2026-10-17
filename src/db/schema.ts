@@ -662,3 +662,24 @@ export const fundingOffers = pgTable(
     uniqueIndex("funding_offers_active_label_idx").on(t.businessId, t.label).where(sql`${t.archivedAt} is null`),
   ],
 );
+
+// ---------- Autonomous cash-flow recovery. One row per distinct 'strategy is off track' situation; the unique fingerprint is what makes a repeated trigger
+// return the same case instead of starting a second run. The assessment is a stored report (figures from code), never the source of truth for cash:
+// every new run recomputes the forecast from the books and the sandbox. Status moves only forward: open -> planned | replanned | no_plan | blocked | failed -> superseded.
+export const recoveryCases = pgTable(
+  "recovery_cases",
+  {
+    id: id(),
+    businessId: businessId(),
+    fingerprint: text("fingerprint").notNull(),
+    strategyAuthorisationId: uuid("strategy_authorisation_id").references(() => planAuthorisations.id),
+    status: text("status").notNull(), // open | planned | replanned | no_plan | blocked | failed | superseded
+    events: jsonb("events").notNull(),
+    assessment: jsonb("assessment").notNull(),
+    runId: uuid("run_id"),
+    supersededBy: uuid("superseded_by"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("recovery_cases_fingerprint_idx").on(t.businessId, t.fingerprint), index("recovery_cases_business_idx").on(t.businessId, t.createdAt)],
+);

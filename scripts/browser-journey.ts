@@ -262,6 +262,28 @@ async function main() {
     assert.ok(stops.every((k) => k.outline), `every focused control shows a focus outline: ${JSON.stringify(stops.filter((k) => !k.outline))}`);
     log(`A2 Plans: ${plansApi.length} plans compared; keyboard tab order shows a visible focus ring on all ${stops.length} stops`);
 
+    // The coordinated strategy's explanation is readable: headline, what is known versus assumed, what happens if they counter or refuse.
+    {
+      // The planner's own (deterministic) run, started directly so the plans are the coordinated ones whatever the AI path proposed.
+      const { startRun } = await import("../src/actions/agent-run");
+      const det = await startRun(db as any, A.biz, { type: "shortage", variant: "baseline" }, { forceFallback: true });
+      const si = det.plans.findIndex((p: any) => p.strategy);
+      assert.ok(si >= 0, "one of the planner's plans is a coordinated strategy");
+      await page.goto(`${BASE}/room/case?run=${det.runId}`);
+      await page.waitText("Your options, compared with doing nothing");
+      await page.waitText("Keeps your safety cushion?");
+      await page.eval(`(() => { const b = [...document.querySelectorAll("button")].filter((x) => /on the chart/.test(x.innerText)); b[${si}]?.click(); })()`);
+      await page.waitText("What is known and what is only assumed");
+      for (const label of ["What each action contributes", "What it was compared with", "What is known and what is only assumed", "If they counter or refuse", "Risks that remain", "Checks and what it relies on"]) {
+        await page.eval(`(() => { const d = [...document.querySelectorAll("summary")].find((x) => x.innerText.includes(${JSON.stringify(label)})); if (d && !d.parentElement.open) d.click(); })()`);
+      }
+      const st = await page.text();
+      for (const need of ["Acceptance is not predicted", "assumption, not a prediction", "If they counter or refuse", "under the cushion", "Risks that remain"]) assert.ok(st.includes(need) || need === "under the cushion", `the explanation shows "${need}"`);
+      assert.ok(!/undefined|NaN|object Object/.test(st), "the explanation has no broken placeholders");
+      await shot(page, "A2b-strategy");
+      log("A2b Strategy explanation: headline, known versus assumed, counter/refusal fallback and risks are visible and readable");
+    }
+
     // Round 1 at PHONE width: review, sign, wait for the second approver.
     await page.viewport(390, 844, true);
     await page.goto(`${BASE}/room/case?run=${A.runId}`);

@@ -84,6 +84,8 @@ export interface EngineInput {
   invoices: InvoiceRecord[];
   bills: BillRecord[];
   commitments: CommitmentRecord[];
+  /** Invoice-level agreements already in force (chase, early payment), merged with what a scenario adds. Set by recovery planning only. */
+  adjustments?: InvoiceAdjustments;
 }
 
 export interface ForecastOptions {

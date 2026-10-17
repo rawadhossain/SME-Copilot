@@ -94,4 +94,29 @@ export interface PlanView {
   removedSentences: string[];
   /** Finance fee (basis points of the invoice) that the metrics assume; set when the plan has a finance lever. */
   financeFeeBps?: number;
+  /** Set by code for a coordinated (combined) strategy: why this combination, what it beat, what it depends on, what risk remains. Never model text. */
+  strategy?: StrategyView;
+}
+
+/** The explanation of a coordinated strategy. Every sentence is a template filled with engine figures. */
+export interface StrategyView {
+  verdict: "closes_without_borrowing" | "closes_with_financing" | "partial";
+  headline: string;
+  why: string[];
+  /** One line per simpler option that was compared (best single action, best without borrowing, finance alone, the plan without its finance part). */
+  compared: string[];
+  /** One line per action: what it does on its own and what the plan would reach without it. */
+  parts: string[];
+  assumptions: string[];
+  risks: string[];
+  /** Independent checks run on the combined result (nothing counted twice, order cash adds up). */
+  checks: string[];
+  /** What the counterparties have already said in structured replies (limits, refusals, quoted fees) and how this plan respects it. */
+  known?: string[];
+  /** Asks nobody has said anything about: assumptions, not predictions. */
+  untested?: string[];
+  /** For asks with a scale: how soft a counter-offer can get before the gap stays open. */
+  room?: string[];
+  /** What is left if each counterparty refuses its part. */
+  ifRefused?: string[];
 }

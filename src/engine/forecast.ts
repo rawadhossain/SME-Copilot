@@ -12,6 +12,7 @@ import {
   type Forecast,
   type ForecastItem,
   type ForecastOptions,
+  type InvoiceAdjustments,
   type InvoiceRecord,
   type LatenessStat,
   type Provenance,
@@ -82,7 +83,7 @@ export function buildForecast(input: EngineInput, options: ForecastOptions = {})
   const shiftFor = (cpId: string): number => (noShift.has(cpId) ? 0 : (lateness.get(cpId)?.shiftDays ?? 0));
   const items: Omit<ForecastItem, "weekIndex">[] = [];
   const od = input.overdue ?? DEFAULT_OVERDUE;
-  const adj = options.adjustments ?? { chase: [], early: [] };
+  const adj: InvoiceAdjustments = { chase: [...(input.adjustments?.chase ?? []), ...(options.adjustments?.chase ?? [])], early: [...(input.adjustments?.early ?? []), ...(options.adjustments?.early ?? [])] };
   let adjustmentCost = 0n;
 
   // 1. Open customer invoices: due date shifted by the counterparty's typical lateness.
