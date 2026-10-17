@@ -7,6 +7,7 @@ import { Btn, Card, Chip, Empty, ErrorNote, Field, Stat, Th, inputClass, type To
 import { Chart, type Series } from "@/ui/Chart";
 import { date, money, pct, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
+import { Decision } from "@/ui/funding/Decision";
 
 type Kind = "equal" | "total_split" | "factor" | "dates";
 interface Form {
@@ -134,6 +135,8 @@ export default function Funding() {
         <h1 className="display text-3xl">Funding options</h1>
         <p className="text-ink-soft">Type in the offers you have received. The system works out what each really costs and what it does to your cash, next to the choice of not borrowing at all. Nothing is sent to any lender and nothing is signed here.</p>
       </div>
+
+      <Decision />
 
       {forms.map((f, i) => (
         <Card key={f.key} title={`Offer ${i + 1}`} right={forms.length > 1 ? <Btn variant="ghost" onClick={() => setForms((fs) => fs.filter((x) => x.key !== f.key))}>Remove</Btn> : undefined}>

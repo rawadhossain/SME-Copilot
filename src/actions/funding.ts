@@ -91,11 +91,9 @@ export interface FundingResult {
   basis: { asOf: string; currency: string; reserveMinor: bigint; horizonWeeks: number; includesPendingCommitments: number; includesAgreedTerms: boolean };
 }
 
-export async function compareFunding(db: Db, businessId: string, input: unknown): Promise<FundingResult> {
-  const parsed = compareFundingInputSchema.parse(input);
+/** The picture every funding view uses: the books, the confirmed commitments, the terms agreed so far, and the owner's signed funding limits. */
+export async function fundingBasis(db: Db, businessId: string) {
   const ctx = await buildContext(db, businessId, null);
-  const offers = buildOffers(parsed.offers, ctx.currency);
-  // The same picture the shortage detector uses: the books, the confirmed commitments, and the terms agreed so far.
   const base = ctx.pending.map((p) => p.event);
   const changes = await currentAgreedChanges(db, businessId);
   let events = base;
@@ -108,6 +106,13 @@ export async function compareFunding(db: Db, businessId: string, input: unknown)
   // The owner-signed funding limits, when the signed mandate has them. An invalid mandate means no limits are applied and the screen says so.
   const m = checkSignedMandate(ctx.mandate);
   const limits = m.ok ? { costBps: m.mandate.limits.maxFundingCostBps ?? null, amountMinor: m.mandate.limits.maxFundingAmountMinor ?? null } : { costBps: null, amountMinor: null };
+  return { ctx, base, events, agreed, limits, mandateValid: m.ok };
+}
+
+export async function compareFunding(db: Db, businessId: string, input: unknown): Promise<FundingResult> {
+  const parsed = compareFundingInputSchema.parse(input);
+  const { ctx, base, events, agreed, limits, mandateValid } = await fundingBasis(db, businessId);
+  const offers = buildOffers(parsed.offers, ctx.currency);
   const comparison = compareOffers(ctx.input, events, offers, { horizonWeeks: PLANNING_HORIZON_WEEKS, minDscrX100: parsed.minDscrX100, maxAnnualisedCostBps: limits.costBps, maxAmountMinor: limits.amountMinor });
-  return { comparison, offers, limits: { ...limits, mandateValid: m.ok }, basis: { asOf: ctx.asOf, currency: ctx.currency, reserveMinor: ctx.input.reserve, horizonWeeks: PLANNING_HORIZON_WEEKS, includesPendingCommitments: base.length, includesAgreedTerms: agreed } };
+  return { comparison, offers, limits: { ...limits, mandateValid }, basis: { asOf: ctx.asOf, currency: ctx.currency, reserveMinor: ctx.input.reserve, horizonWeeks: PLANNING_HORIZON_WEEKS, includesPendingCommitments: base.length, includesAgreedTerms: agreed } };
 }

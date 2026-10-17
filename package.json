@@ -28,6 +28,7 @@
     "check:financing": "bun scripts/financing-sanity.ts",
     "check:plan": "bun --env-file=.env scripts/plan-sanity.ts",
     "check:ledger": "bun --env-file=.env scripts/ledger-sanity.ts",
+    "check:funding-decision": "bun --env-file=.env scripts/funding-decision-sanity.ts",
     "check:rescue": "bun --env-file=.env scripts/rescue-sanity.ts",
     "test:browser": "bun --env-file=.env scripts/browser-journey.ts",
     "ask:live": "bun --env-file=.env scripts/ask-live.ts",
