@@ -9,6 +9,7 @@ import { EditPlanDialog } from "@/ui/case/EditPlanDialog";
 import { SignDialog } from "@/ui/case/SignDialog";
 import { Btn, Card, Chip, Empty, ErrorNote, Loading } from "@/ui/kit";
 import { OutcomeSummary } from "@/ui/rescue";
+import { AdaptationCard } from "@/ui/case/Adaptation";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 
@@ -169,6 +170,7 @@ function Case() {
       {auths.filter((a) => a.execution && ["completed", "verification_failed", "failed", "rolled_back"].includes(a.execution.status)).map((a) => (
         <OutcomeSummary key={`o-${a.authorisation.id}`} auth={a} reason={data.runs[0]?.trigger?.reason ?? null} doNothing={lines?.doNothing ?? null} agreed={lines?.agreed ?? null} reserveMinor={lines?.reserveMinor ?? null} cur={cur} exportBase={`/api/business/${biz}/cases/${rootId}/export`} />
       ))}
+      {(() => { const a = [...data.runs].reverse().find((r: any) => r.adaptation)?.adaptation ?? exhausted?.adaptation; return a ? <AdaptationCard a={a} cur={cur} /> : null; })()}
       {isExhausted && <ExhaustedCard run={run} last={exhausted?.bestOption?.plan ?? lastAttempted} cur={cur} />}
       <details className="group rounded-2xl border border-line bg-panel"><summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-ink-soft">Show how the assistant worked it out ({run.timeline.length} steps)</summary>
       <Card title="How the assistant worked it out" subtitle={`Round ${run.round}${run.round > 0 ? " · re-plan with learned constraints" : ""} · started ${new Date(run.startedAt).toLocaleTimeString("en-GB")}`} right={<RunChips run={run} />}>

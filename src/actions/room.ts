@@ -173,7 +173,7 @@ function stepLabel(kind: string, p: Record<string, unknown>): { label: string; t
   const note: Record<string, [string, "neutral" | "good" | "caution" | "danger"]> = {
     context: ["Read the confirmed commitments and your limits", "neutral"], loop_finished: ["Planner finished", "good"], fallback: ["The deterministic planner was used", "caution"],
     ai_unavailable: ["The AI planner was unavailable; fallback used", "caution"], do_nothing: ["Computed the do-nothing baseline", "neutral"], shortage_trigger: ["Shortage trigger", "neutral"], owner_revision: ["You revised the terms after a counterparty pushed back", "good"],
-    refused: ["The run was refused", "danger"], failed: ["The run failed", "danger"],
+    adaptation: ["Weighed the replies and chose the next step", "good"], refused: ["The run was refused", "danger"], failed: ["The run failed", "danger"],
   };
   const [label, tone] = note[t] ?? [t, "neutral"];
   return { label, tone };
@@ -205,6 +205,7 @@ export async function getCase(db: Db, businessId: string, rootInput: string) {
       id: r.id, parentRunId: r.parentRunId, successorRunId: r.successorRunId, round: r.round, status: r.status, lifecycle: r.lifecycle, planSource: r.planSource, model: r.model, mode: r.mode,
       startedAt: r.startedAt, finishedAt: r.finishedAt, error: r.error, constraints: r.constraints, trigger: r.trigger, fallbackUsed: fallback,
       doNothing: (doNothing?.payload as { metrics?: unknown } | undefined)?.metrics ?? null,
+      adaptation: (mySteps.filter((s) => s.kind === "note" && (s.payload as { type?: string }).type === "adaptation").at(-1)?.payload as { report?: unknown } | undefined)?.report ?? null,
       timeline: mySteps.map((s) => ({ seq: s.seq, kind: s.kind, ...stepLabel(s.kind, s.payload as Record<string, unknown>), at: s.createdAt })),
       plans: planRows.filter((p) => p.runId === r.id).map((p) => ({ id: p.planHash, rank: p.rank, plan: p.plan })),
     };

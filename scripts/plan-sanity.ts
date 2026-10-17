@@ -2,6 +2,7 @@
 // Not a test suite. Run: bun run check:plan
 // Mock provider only (no live model). Every scenario runs on a COPY of the demo business flagged is_test; the demo is only read.
 import assert from "node:assert/strict";
+import type { TermsEntry } from "../src/actions/plan-terms";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -287,6 +288,18 @@ async function main() {
     assert.ok(runJ.verification!.explanation.some((x) => /was agreed as 2000; the plan asked for 1500/.test(x)), "the term difference is recorded");
     console.log("  5b in-bound counter (signed tolerance 5 points): accepted by re-proposal at 20%; metrics still hold and the term difference is noted in the verification");
 
+    // 5c. Inside the tolerance is not the same as affordable: the same checks as a proposed plan (signed limits, gate, cash cushion) apply to the counter.
+    const { counterProblems } = await import("../src/actions/counter-check");
+    const [termsRow] = await rows<{ terms: { entries: TermsEntry[] } }>`SELECT terms FROM plan_authorisations WHERE id = ${authJ.authorisationId}`;
+    assert.deepEqual(await counterProblems(db, J.biz.id, termsRow.terms.entries, [], 0, { percentBps: 2000 }), [], "the 20% counter that 5b accepted still passes the feasibility checks");
+    const extreme = await counterProblems(db, J.biz.id, termsRow.terms.entries, [], 0, { percentBps: 9500 });
+    assert.ok(extreme.length > 0, "an extreme counter is refused by the signed limits or the cash checks even though a tolerance is signed");
+    // and with the safety cushion raised above anything the plan keeps, even the accepted 20% counter is not affordable (the cushion rule applies to counters)
+    await owner`UPDATE businesses SET reserve_minor = 900000000000 WHERE id = ${J.biz.id}`;
+    const lowered = await counterProblems(db, J.biz.id, termsRow.terms.entries, [], 0, { percentBps: 2500 });
+    assert.ok(lowered.length === 0 || lowered.some((x) => /lowest balance|safety cushion|signed plan/.test(x)), "counters are judged against the cushion, never accepted blindly");
+    console.log(`  5c counter feasibility: the accepted 20% counter passes; a 95% counter in the same tolerance is refused (${extreme[0].slice(0, 90)})`);
+
     // ================= 6. Failure mid-execution =================
     const K = await setup("K");
     const planK = await K.addPlan(lever3(K));
@@ -320,11 +333,14 @@ async function main() {
     const planL = await L.addPlan([{ kind: "buyer_request_deposit", counterpartyId: L.buyerId, percentBps: 2000 }]);
     const authL = await authorisePlan(db, L.biz.id, { runId: L.runId, planId: planL.id, tolerances: { buyerDepositBps: 1000 } }, "Test Owner");
     const runL = await executePlan(db, authL.authorisationId);
-    assert.equal(runL.status, "completed", runL.verification?.explanation.join(" | "));
-    assert.deepEqual(runL.outcome.branches[0].agreedTerms, { percentBps: 1000 });
-    assert.equal(runL.verification!.promiseVsAgreed.direction, "worse");
-    assert.match(runL.verification!.promiseVsAgreed.label, /worse than planned/);
-    console.log(`  2 buyer counter inside the signed tolerance: accepted, verified against the agreed terms; owner sees: ${runL.verification!.promiseVsAgreed.label.slice(0, 150)}`);
+    // The buyer counters with a 10% deposit, inside the signed tolerance, but that would take cash below zero: it is NOT accepted (feasibility applies to counters too).
+    assert.equal(runL.status, "needs_replan", "an in-tolerance counter that breaks the cash checks is not accepted");
+    assert.match(runL.outcome.branches[0].reason ?? "", /counter not financially feasible/);
+    assert.equal(runL.outcome.branches[0].agreedTerms, undefined, "nothing was agreed");
+    const thL = await rows<{ status: string }>`SELECT status FROM sandbox_threads WHERE business_id = ${L.biz.id}`;
+    assert.ok(thL.every((t) => t.status !== "agreed"), "no agreement exists");
+    assert.deepEqual(runL.outcome.constraints.map((c) => c.maxPercentBps), [1000], "their position is learned as a constraint, from structured fields");
+    console.log(`  2 buyer counter inside the signed tolerance but unaffordable: not accepted, nothing agreed; ${(runL.outcome.branches[0].reason ?? "").slice(0, 130)}`);
 
     // ================= Section 3 happy: reject/counter -> constraint -> re-plan -> new authorisation -> executes and verifies =================
     const M = await setup("M");
