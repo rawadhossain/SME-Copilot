@@ -12,3 +12,4 @@ export * from "./financing";
 export * from "./insights";
 export * from "./recovery";
 export * from "./flight";
+export * from "./alerts";

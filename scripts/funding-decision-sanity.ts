@@ -150,6 +150,38 @@ async function main() {
     const appsAfter = Number((await db.select({ c: dsql<number>`count(*)` }).from(S.sandboxApplications).where(eq(S.sandboxApplications.businessId, c2.id)))[0].c);
     assert.equal(appsAfter, appsBefore, "assessing applied for nothing");
     console.log(`  C order present: ${fin ? `invoice finance is a candidate (${fin.affordability}, cost ${fin.totalCostMinor}, route ${fin.route.kind})` : "invoice finance not offered: " + a3.decision.unavailable.map((u) => u.reason).join(" ")}; recommendation "${a3.decision.recommendation.kind}"`);
+
+    // ---- D. catalogue products become candidates: eligible, not executable, sized to the need, judged like any other; invoice finance is not duplicated ----
+    const plain = (d: any) => JSON.stringify(d, (k, v) => (k === "catalogue" ? undefined : typeof v === "bigint" ? `${v}n` : v));
+    // A clone with the order but NO bank history and no declared start: nothing in the catalogue is eligible, so the decision must be unchanged.
+    const c3 = await createDemoClone(db as any, demo!);
+    await db.delete(S.transactions).where(eq(S.transactions.businessId, c3.id));
+    await db.update(S.businesses).set({ tradingSince: null }).where(eq(S.businesses.id, c3.id));
+    for (const [filename, kind] of [["supplier-quote-kestrel.md", "supplier_quote"], ["purchase-order-northgate.md", "purchase_order"]] as const) {
+      const r = await docs.createDocumentAndExtract(db as any, c3.id, { filename, kind, text: readFileSync(join("fixtures", filename), "utf8") }, { gateway: gw });
+      await confirmExtraction(db as any, r.extraction.id, "Test Owner");
+    }
+    const none1 = await assessFunding(db as any, c3.id);
+    const none0 = await assessFunding(db as any, c3.id, { catalogue: false });
+    assert.ok(none1.decision.need.needed, "there is a real gap");
+    assert.equal(plain(none1.decision), plain(none0.decision), "nothing eligible in the catalogue (no bank history): the decision is unchanged");
+    assert.ok(none1.decision.candidates.every((c) => c.source !== "catalogue"));
+    const withCat = (await assessFunding(db as any, c2.id)).decision;
+    const without = (await assessFunding(db as any, c2.id, { catalogue: false })).decision;
+    const cat = withCat.candidates.filter((c) => c.source === "catalogue");
+    assert.ok(cat.length >= 1, "an eligible catalogue loan appears as a candidate");
+    for (const c of cat) {
+      assert.ok(c.indicative === true && c.catalogue!.verdict === "eligible" && c.route.kind === "none" && c.termsAssumed);
+      assert.ok(c.reasons.length > 0 && c.rank >= 1 && ["affordable", "affordable_with_caution", "partly_covers", "not_affordable"].includes(c.affordability), "judged week by week like the others");
+      assert.ok(c.catalogue!.productId !== "ifin-clearwater" && c.product !== "invoice_finance", "invoice finance is not added a second time");
+    }
+    const sandboxFin = withCat.candidates.find((c) => c.source === "sandbox_invoice_finance");
+    assert.ok(sandboxFin && sandboxFin.catalogue && sandboxFin.catalogue.productId === "ifin-clearwater", "the catalogue verdict is attached to the existing invoice-finance option");
+    assert.equal(withCat.candidates.filter((c) => /invoice/i.test(c.product)).length, 1, "exactly one invoice-finance option");
+    const order = (d: any) => d.candidates.filter((c: any) => c.source !== "catalogue").map((c: any) => c.id).join(",");
+    assert.equal(order(withCat), order(without), "the existing candidates keep their relative order");
+    assert.equal(plain(withCat.alternatives), plain(without.alternatives), "non-borrowing options are unchanged");
+    console.log(`  D catalogue: ${cat.length} eligible product(s) judged beside ${withCat.candidates.length - cat.length} existing candidate(s); ranking: ${withCat.candidates.map((c) => `#${c.rank} ${c.label} (${c.source}, ${c.affordability})`).join("; ")}; recommendation "${withCat.recommendation.kind}"`);
   } finally {
     await sql.end();
   }

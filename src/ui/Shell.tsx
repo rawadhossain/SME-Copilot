@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Btn, Loading } from "./kit";
 import { NextStep } from "./NextStep";
+import { AlertBadge, AlertsProvider, HeaderAlerts } from "./alerts";
 import { SessionProvider, call, useSession } from "./session";
 
 const NAV = [
@@ -17,7 +18,7 @@ const NAV = [
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  return <SessionProvider><Frame>{children}</Frame></SessionProvider>;
+  return <SessionProvider><AlertsProvider><Frame>{children}</Frame></AlertsProvider></SessionProvider>;
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -38,6 +39,7 @@ function Frame({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
           <Link href="/room" className="display text-xl text-accent">Ledgerhand</Link>
           <span className="truncate text-sm font-medium">{session.business.name.replace(" (SYNTHETIC)", "")}</span>
+          <HeaderAlerts />
           <div className="ml-auto flex flex-wrap items-center gap-3 text-sm">
             <span className="text-ink-soft">{session.user.displayName}</span>
             <Btn variant="ghost" onClick={signOut}>Sign out</Btn>
@@ -46,7 +48,7 @@ function Frame({ children }: { children: React.ReactNode }) {
         <nav aria-label="Main" className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4">
           {[...NAV, ...(session.user.role === "approver" ? [{ href: "/room/approvals", label: "Approvals" }] : [])].map((n) => {
             const on = n.href === "/room" ? path === "/room" : path.startsWith(n.href);
-            return <Link key={n.href} href={n.href} aria-current={on ? "page" : undefined} className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${on ? "border-accent text-accent" : "border-transparent text-ink-soft hover:text-ink"}`}>{n.label}</Link>;
+            return <Link key={n.href} href={n.href} aria-current={on ? "page" : undefined} className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${on ? "border-accent text-accent" : "border-transparent text-ink-soft hover:text-ink"}`}>{n.label}{n.href === "/room" && <AlertBadge label="alerts need your attention" />}</Link>;
           })}
         </nav>
       </header>

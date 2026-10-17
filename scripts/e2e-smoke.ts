@@ -299,9 +299,71 @@ async function main() {
       assert.ok(o0.warnings.some((w: string) => w.includes("above your limit")) && o0.warnings.some((w: string) => w.includes("funding limit you signed")));
       log("funding store and contract check: save and replace, bad save refused, matching contract matches, a higher fee is flagged as costing 500.00 more, unknown offers refused; signed limits (50% a year, 15,000.00) flag the offer");
     }
+    {
+      // Financing-option matching and the declared trading start: sessions, CSRF, company scoping and roles.
+      const mUrl = `/api/business/${biz}/funding/match`;
+      const pUrl = `/api/business/${biz}/funding/profile`;
+      assert.equal((await api(mUrl, { body: {}, cookie: false, csrf: false })).status, 401, "match: no session");
+      assert.equal((await api(mUrl, { body: {}, csrf: false })).status, 403, "match: no CSRF token");
+      assert.equal((await api("/api/business/50d04f73-3186-40b1-96fe-46f478ea6134/funding/match", { body: {} })).status, 403, "match: another company");
+      const m = await api(mUrl, { body: {} });
+      assert.equal(m.status, 200, JSON.stringify(m.json));
+      assert.equal(m.json.match.results.length, 6);
+      assert.ok(m.json.match.results.every((r: any) => r.indicative === true && r.notice.includes("not a quote")));
+      assert.ok(["declared", "bank_statement"].includes(m.json.profile.historySource), "the match response carries the profile and where history comes from");
+      assert.equal((await api(pUrl, { method: "PUT", body: { tradingSince: "2021-03-01" }, cookie: false, csrf: false })).status, 401, "profile: no session");
+      assert.equal((await api(pUrl, { method: "PUT", body: { tradingSince: "2021-03-01" }, csrf: false })).status, 403, "profile: no CSRF token");
+      assert.equal((await api("/api/business/50d04f73-3186-40b1-96fe-46f478ea6134/funding/profile", { method: "PUT", body: { tradingSince: "2021-03-01" } })).status, 403, "profile: another company");
+      const future = await api(pUrl, { method: "PUT", body: { tradingSince: "2099-01-01" } });
+      assert.equal(future.status, 400, "a date after the books date is refused");
+      assert.ok(/after/.test(future.json.error), future.json.error);
+      assert.equal((await api(pUrl, { method: "PUT", body: { tradingSince: "1949-12-31" } })).status, 400, "before 1950 is refused");
+      assert.equal((await api(pUrl, { method: "PUT", body: { tradingSince: "2021-03-01" } })).status, 200, "the owner can state it");
+      const after = await api(mUrl, { body: {} });
+      assert.equal(after.json.profile.historySource, "declared");
+      assert.equal(after.json.profile.tradingSince, "2021-03-01");
+      assert.equal(await asApprover(async () => (await api(pUrl, { method: "PUT", body: { tradingSince: "2000-01-01" } })).status), 403, "an approver cannot state it");
+      assert.equal((await api(mUrl, { body: {} })).json.profile.tradingSince, "2021-03-01", "and it did not change");
+      log("matching: no session 401, no CSRF 403, other company 403, owner 200 with profile and history source; trading start: bad dates 400, owner 200, approver 403");
+    }
+    {
+      // Alerts and the monitor: sessions, CSRF, company scoping, roles.
+      const runUrl = `/api/business/${biz}/monitor/run`;
+      const listUrl = `/api/business/${biz}/alerts`;
+      assert.equal((await api(listUrl, { cookie: false, csrf: false })).status, 401, "alerts: no session");
+      assert.equal((await api("/api/business/50d04f73-3186-40b1-96fe-46f478ea6134/alerts")).status, 403, "alerts: another company");
+      assert.equal((await api(runUrl, { body: {}, cookie: false, csrf: false })).status, 401, "monitor run: no session");
+      assert.equal((await api(runUrl, { body: {}, csrf: false })).status, 403, "monitor run: no CSRF token");
+      assert.equal((await api("/api/business/50d04f73-3186-40b1-96fe-46f478ea6134/monitor/run", { body: {} })).status, 403, "monitor run: another company");
+      const ran = await api(runUrl, { body: {} });
+      assert.equal(ran.status, 200, JSON.stringify(ran.json));
+      assert.ok(ran.json.counts && typeof ran.json.asOf === "string");
+      const again = await api(runUrl, { body: {} });
+      assert.ok(again.status === 200 && again.json.fromCache === true, "a second run within 30 seconds returns the stored result");
+      const got = await api(listUrl);
+      assert.equal(got.status, 200, JSON.stringify(got.json));
+      assert.ok(Array.isArray(got.json.alerts) && got.json.lastRunAt && got.json.counts, "alerts and the last run time are returned");
+      const anAlert = got.json.alerts[0];
+      assert.ok(anAlert && anAlert.severity && anAlert.title && anAlert.refs.route, "the books of this story have at least one alert, with a title and a place to go");
+      assert.equal((await api(`/api/alerts/${anAlert.id}/acknowledge`, { body: {}, cookie: false, csrf: false })).status, 401, "acknowledge: no session");
+      assert.equal((await api(`/api/alerts/${anAlert.id}/acknowledge`, { body: {}, csrf: false })).status, 403, "acknowledge: no CSRF token");
+      assert.equal(await asApprover(async () => (await api(listUrl)).status), 200, "an approver can read alerts");
+      assert.equal(await asApprover(async () => (await api(runUrl, { body: {} })).status), 200, "an approver can run the check");
+      const ack = await api(`/api/alerts/${anAlert.id}/acknowledge`, { body: {} });
+      assert.equal(ack.status, 200, JSON.stringify(ack.json));
+      assert.equal((await api(listUrl)).json.alerts.find((a: any) => a.id === anAlert.id).status, "acknowledged", "acknowledged alerts stay visible");
+      const other2 = await api("/api/demo/clone", { method: "POST", body: {} }); // the session now works in the new company
+      assert.equal(other2.status, 200);
+      const stranger = (await api(`/api/business/${other2.json.id}/alerts`)).json.alerts[0];
+      assert.equal((await api(`/api/alerts/${anAlert.id}/acknowledge`, { body: {} })).status, 403, "an alert of another company cannot be acknowledged");
+      assert.ok(stranger === undefined || stranger.id !== anAlert.id);
+      assert.equal((await api("/api/auth/business", { body: { businessId: biz } })).status, 200, "back to the story's company");
+      log("alerts: no session 401, no CSRF 403, other company 403, owner 200 (list, run, 30 s cache, acknowledge), approver 200 (list, run)");
+    }
     for (const path of ["/room", "/room/commitments", "/room/funding", `/room/case?run=${shortageRunId}`, "/room/safety", "/room/safety?tab=limits", "/room/safety?tab=records", "/dev"]) {
       const res = await fetch(`${BASE}${path}`, { headers: { cookie }, redirect: "manual" });
       assert.equal(res.status, 200, `${path} renders for a signed-in owner`);
+      if (path === "/room/funding") { const g = await api(`/api/business/${biz}/funding/match`); assert.ok(g.status === 200 && g.json.match.results.length === 6 && g.json.extras, "the products section's data (GET match) is served"); }
     }
     for (const [from, to] of [["/room/scoreboard", "/room/safety?tab=results"], ["/room/mandate", "/room/safety?tab=limits"], ["/room/evidence", "/room/safety?tab=records"]]) {
       const res = await fetch(`${BASE}${from}`, { headers: { cookie }, redirect: "manual" });

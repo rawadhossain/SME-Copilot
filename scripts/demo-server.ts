@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 const mock = process.env.DEMO_MODE === "mock";
-const env = { ...process.env, SHORTAGE_AUTO_PLAN: "on", LLM_API_KEY: "" } as NodeJS.ProcessEnv;
+const env = { ...process.env, SHORTAGE_AUTO_PLAN: "on", MONITOR_AUTO_RECOVER: "on", LLM_API_KEY: "" } as NodeJS.ProcessEnv;
 if (mock) {
   env.LLM_PROVIDER = "mock"; env.LLM_MODE = "live"; delete env.LLM_RECORDINGS_DIR;
 } else {

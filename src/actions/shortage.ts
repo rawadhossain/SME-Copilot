@@ -45,6 +45,8 @@ export interface ShortageDetection {
   reason: ShortageReason | null;
   /** Always present: the numbers of the forecast that was checked. */
   checked: { variant: "baseline" | "downside"; horizonWeeks: number; minBalanceMinor: string; minBalanceWeek: number; reserveMinor: string; forecastHash: string };
+  /** The forecast that was checked, week by week (1-based), for the alert monitor. */
+  weekly: { index: number; start: string; closingMinor: bigint }[];
 }
 
 /** The detector. Pure given the database state; deterministic; no model. */
@@ -65,13 +67,14 @@ export async function detectShortage(db: Db, businessId: string, input: unknown 
   const firstReserve = f.firstBreach ? f.firstBreach.weekIndex + 1 : null;
   const checked = { variant, horizonWeeks: f.horizonWeeks, minBalanceMinor: f.minimum.amount.toString(), minBalanceWeek: f.minimum.weekIndex + 1, reserveMinor: f.reserve.toString(), forecastHash };
   const kind = firstNeg !== null ? ("below_zero" as const) : firstReserve !== null ? ("below_reserve" as const) : null;
-  if (!kind) return { shortage: false, reason: null, checked };
+  const weekly = f.weeks.map((w) => ({ index: w.index + 1, start: w.start, closingMinor: w.closing }));
+  if (!kind) return { shortage: false, reason: null, checked, weekly };
   const reason: ShortageReason = {
     kind, variant, horizonWeeks: f.horizonWeeks, minBalanceMinor: checked.minBalanceMinor, minBalanceWeek: checked.minBalanceWeek,
     firstNegativeWeek: firstNeg, firstBelowReserveWeek: firstReserve, reserveMinor: checked.reserveMinor,
     shortfallMinor: (f.maxShortfall > 0n ? f.maxShortfall : 0n).toString(), forecastHash, source,
   };
-  return { shortage: true, reason, checked };
+  return { shortage: true, reason, checked, weekly };
 }
 
 export interface ShortageCheckResult {

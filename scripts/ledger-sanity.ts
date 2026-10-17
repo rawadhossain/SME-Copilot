@@ -131,8 +131,9 @@ async function main() {
     const edited: any = await L.editDocument(db as any, id, "invoice", invId, { amount: "12000.00", acknowledgeOverlaps: true });
     assert.equal(BigInt(edited.document.outstandingMinor), 800_000n, "raising the amount raises what is still owed");
     // a payment dated after the balance date is real but the forecast keeps waiting for it
-    const t = new Date().toISOString().slice(0, 10);
-    if (t > asOf) {
+    const t = addDays(asOf, 3);
+    process.env.APP_TODAY = t; // pin the clock so this does not depend on the day the check runs
+    {
       const late: any = await L.recordPayment(db as any, id, "invoice", invId, { amount: "100.00", paidOn: t });
       assert.ok(late.warnings.length > 0, "told that the bank balance does not have it yet");
       assert.equal((await forecast()).items.find((i: any) => i.sourceId === invId)!.amount, 800_000n, "not yet in the bank balance, so the forecast still counts it");

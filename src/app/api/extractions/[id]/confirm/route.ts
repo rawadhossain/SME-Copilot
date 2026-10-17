@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { extractions } from "@/db/schema";
 import { badId, handle, readJson } from "@/actions/http";
 import { checkShortage } from "@/actions/shortage";
+import { watchAfter } from "@/actions/monitor";
 import { confirmExtraction } from "@/ingest/documents/confirm";
 
 export async function POST(req: Request, ctx: RouteContext<"/api/extractions/[id]/confirm">) {
@@ -15,7 +16,7 @@ export async function POST(req: Request, ctx: RouteContext<"/api/extractions/[id
   if (bad) return bad;
   const body = await readJson(req);
   if (!body.ok) return body.res;
-  return handle(async () => {
+  const res = await handle(async () => {
     const confirmed = await confirmExtraction(db, id, z.object({ confirmedBy: z.string() }).parse(body.data).confirmedBy);
     let shortage: unknown = { status: "skipped" };
     if (process.env.SHORTAGE_AUTO_PLAN !== "off") {
@@ -34,4 +35,9 @@ export async function POST(req: Request, ctx: RouteContext<"/api/extractions/[id
     }
     return { ...confirmed, shortage };
   });
+  if (res.ok) {
+    const [row] = await db.select({ businessId: extractions.businessId }).from(extractions).where(eq(extractions.id, id));
+    if (row) void watchAfter(db, row.businessId, "document_confirmed");
+  }
+  return res;
 }

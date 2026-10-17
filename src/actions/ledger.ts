@@ -9,6 +9,7 @@
 //  2. Bank transactions: a payment can point at the bank line it is; a bank line cannot be used for more than its amount; matching lines are suggested.
 //  3. A payment reduces what the forecast waits for only when it is dated on or before the balance date, i.e. when the bank balance already has it.
 import { and, asc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { todayIso } from "@/lib/clock";
 import { bills, businesses, counterparties, documentPayments, invoices, sandboxPayees, sandboxPayments, sandboxReceipts, transactions } from "@/db/schema";
 import {
   balanceOf, documentEditSchema, documentInputSchema, findOverlaps, paymentInputSchema, paymentProblems, paymentVoidSchema, rankBankCandidates, stateOf, storedStatusAfterPayment,
@@ -34,7 +35,7 @@ const asDoc = (kind: DocKind, r: InvoiceRow | BillRow): DocRow =>
     ? { id: r.id, number: (r as InvoiceRow).number, counterpartyId: (r as InvoiceRow).customerId, issuedOn: r.issuedOn, dueOn: r.dueOn, amountMinor: r.amountMinor, currency: r.currency, paidOn: r.paidOn, status: r.status, countedIn: r.countedIn }
     : { id: r.id, number: (r as BillRow).reference, counterpartyId: (r as BillRow).supplierId, issuedOn: r.issuedOn, dueOn: r.dueOn, amountMinor: r.amountMinor, currency: r.currency, paidOn: r.paidOn, status: r.status, countedIn: r.countedIn };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = todayIso;
 
 function amountOf(text: string, currency: string, field: string): bigint {
   const exp = EXPONENTS[currency];

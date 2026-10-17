@@ -8,6 +8,7 @@ import { Chart, type Series } from "@/ui/Chart";
 import { date, money, pct, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 import { Decision } from "@/ui/funding/Decision";
+import { Products } from "@/ui/funding/Products";
 
 type Kind = "equal" | "total_split" | "factor" | "dates";
 interface Form {
@@ -101,6 +102,18 @@ export default function Funding() {
     });
   }, [biz]);
 
+  /** A catalogue product's terms (every payment dated) become an offer in the comparison form below. */
+  function addToComparison(body: any) {
+    setForms((fs) => {
+      if (fs.length >= 6 && fs[0].principal) return fs;
+      const f = fromBody(body, fs.length + 1);
+      return fs.length === 1 && !fs[0].principal && !fs[0].lender ? [f] : fs.length >= 6 ? fs : [...fs, f];
+    });
+    setResult(null);
+    setSaved(`Added "${body.id}" to the comparison below. Press "Compare with not borrowing" to see it next to your other options. These are indicative terms from a synthetic catalogue, not a quote.`);
+    setTimeout(() => document.getElementById("offer-forms")?.scrollIntoView({ behavior: "smooth" }), 50);
+  }
+
   const set = (key: number, patch: Partial<Form>) => setForms((fs) => fs.map((f) => (f.key === key ? { ...f, ...patch } : f)));
   async function run() {
     if (!biz) return;
@@ -137,6 +150,10 @@ export default function Funding() {
       </div>
 
       <Decision />
+
+      <Products onAdd={addToComparison} />
+
+      <div id="offer-forms" />
 
       {forms.map((f, i) => (
         <Card key={f.key} title={`Offer ${i + 1}`} right={forms.length > 1 ? <Btn variant="ghost" onClick={() => setForms((fs) => fs.filter((x) => x.key !== f.key))}>Remove</Btn> : undefined}>

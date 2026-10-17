@@ -107,7 +107,7 @@ export function Decision() {
                 <div key={c.id} className="rounded-xl border border-line p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="font-medium">{c.rank}. {c.label} <span className="text-sm font-normal text-ink-soft">({c.lender}{c.termsAssumed ? ", terms assumed" : ""})</span></p>
-                    <Chip tone={AFFORD[c.affordability].tone}>{AFFORD[c.affordability].label}</Chip>
+                    <span className="flex flex-wrap items-center gap-2">{c.indicative && <Chip tone="neutral">Indicative · synthetic catalogue</Chip>}<Chip tone={AFFORD[c.affordability].tone}>{AFFORD[c.affordability].label}</Chip></span>
                   </div>
                   <dl className="mt-2 grid gap-x-6 gap-y-1 text-sm md:grid-cols-3">
                     <div><dt className="text-ink-soft">Money arrives</dt><dd className="num">{money(c.netReceivedMinor, cur)} on {date(c.disbursementDate)}</dd></div>
@@ -118,6 +118,9 @@ export function Decision() {
                     <div><dt className="text-ink-soft">Weeks below the cushion</dt><dd className="num">{c.weeksBelowReserve}{c.newShortWeeks.length > 0 ? ` (${c.newShortWeeks.length} new)` : ""}</dd></div>
                   </dl>
                   <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{c.reasons.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul>
+                  {c.catalogue && c.source !== "catalogue" && (
+                    <p className="mt-2 text-sm"><strong>Catalogue check for this kind of product:</strong> {c.catalogue.verdict === "eligible" ? "you meet the requirements of the example lender's invoice-finance product" : c.catalogue.reason} <span className="text-xs text-ink-soft">(indicative, synthetic catalogue)</span></p>
+                  )}
                   <p className="mt-2 text-xs text-ink-soft">{c.route.note}</p>
                 </div>))}
             </div>
