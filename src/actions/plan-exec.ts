@@ -9,6 +9,7 @@ import { agentRuns, planAuthorisations, planExecutions, sandboxApplications, san
 import { financedInvoiceMinor } from "@/engine/plans";
 import { canonicalize } from "@/gate/canonical";
 import { buildContext } from "./agent-run";
+import { counterProblems } from "./counter-check";
 import type { Constraint } from "@/domain/constraints";
 import type { GateRequestJson } from "@/gate/request";
 import { requestSchema } from "@/gate";
@@ -350,7 +351,12 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
         b.threadId = sent.result.threadId;
         verdict = classifyProposalReply(e, { outcome: sent.result.outcome ?? "", terms: (sent.result.terms ?? null) as Record<string, unknown> | null });
         if (verdict.verdict === "counter_in_terms") {
-          // A counter inside the signed bound: accept it by proposing exactly the countered terms (open question 17).
+          // Inside the signed tolerance is not the same as affordable: the plan recomputed with the counter must still pass the signed limits, the gate and the cash cushion.
+          const bad = await counterProblems(db, businessId, terms.entries, outcome.branches, e.index, verdict.counterTerms);
+          if (bad.length > 0) verdict = { verdict: "out_of_terms", reason: `counter not financially feasible: ${bad[0]}`, observed: verdict.counterTerms };
+        }
+        if (verdict.verdict === "counter_in_terms") {
+          // A counter inside the signed bound and affordable: accept it by proposing exactly the countered terms (open question 17).
           const again = await act(`accept_counter:${e.index}`, verdict.counterRequest, `${key}:counter`);
           b.proposalIds.push(again.proposalId);
           b.threadId = again.result.threadId ?? b.threadId;

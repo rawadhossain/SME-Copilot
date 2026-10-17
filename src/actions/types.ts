@@ -44,6 +44,7 @@ export const ACTION_EVENTS = {
   PLAN_VERIFICATION_FAILED: "plan.verification_failed",
   PLAN_REPLANNED: "plan.replanned",
   PLAN_EXHAUSTED: "plan.exhausted",
+  NEGOTIATION_ADAPTED: "negotiation.adapted",
   SHORTAGE_DETECTED: "shortage.detected",
   MANDATE_VERSION_SIGNED: "mandate.version_signed",
   AUTH_LOGIN: "auth.login",
