@@ -207,7 +207,7 @@ export function OutcomeSummary({ auth, reason, doNothing, agreed, reserveMinor, 
 
 // ---------------------------------------------------------------- "Ask about my cash"
 
-const SUGGESTED = ["Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?"];
+const SUGGESTED = ["Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?", "What are my biggest financial warnings?", "Are my overdue invoices getting worse?"];
 
 /** A small contextual assistant. It reads facts computed by the engine and cannot sign, approve, pay or send: those only happen through Review and sign. */
 export function AskCash({ biz }: { biz: string }) {

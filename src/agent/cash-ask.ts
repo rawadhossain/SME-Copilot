@@ -5,6 +5,7 @@
 import { z } from "zod";
 import type { Message } from "@/ai";
 import { registerStructuredScript } from "@/ai/scripted";
+import type { Figure, HealthStatus, Severity } from "@/engine";
 import { formatMoney, money } from "@/lib/money";
 
 export const CASH_ASK_PURPOSE = "cash.ask.v1";
@@ -17,7 +18,10 @@ export const askOutputSchema = z.object({
 });
 export type AskOutput = z.output<typeof askOutputSchema>;
 
-export type AskIntent = "why_short" | "late" | "plan_compare" | "avoid_borrowing" | "ledger" | "refusal" | "data_quality" | "action" | "unknown";
+export type AskIntent = "why_short" | "late" | "plan_compare" | "avoid_borrowing" | "ledger" | "refusal" | "data_quality" | "insights" | "action" | "unknown";
+
+/** Which finding a financial-health question is about; null = all of them, most important first. */
+export type InsightTopic = "overdue" | "bills" | "concentration" | "spending" | "cash";
 
 export interface AskPlanFact {
   n: number;
@@ -36,6 +40,19 @@ export interface AskLedgerTotals { openCount: number; outstandingMinor: string; 
 export interface AskLedgerItem { number: string; counterparty: string; outstandingMinor: string; dueOn: string; overdueDays: number }
 export interface AskLedger { receivable: AskLedgerTotals; payable: AskLedgerTotals; overdueInvoices: AskLedgerItem[]; billsDueSoon: AskLedgerItem[] }
 
+/** The financial-health findings: titles, wording and figures written by code. Evidence rows (names, bank descriptions) are not part of it. */
+export interface InsightFacts {
+  asOf: string;
+  status: HealthStatus;
+  headline: string;
+  comparable: boolean;
+  comparableReason: string | null;
+  windowDays: number;
+  topic: InsightTopic | null;
+  findings: { id: string; kind: string; severity: Severity; title: string; why: string; figures: Figure[]; comparison: string | null; uncertainty: string[]; actions: string[] }[];
+  limits: string[];
+}
+
 /** Everything an answer may rely on. All figures come from the engine, the stored plans and the signed mandate; none from a model or a document. */
 export interface AskFacts {
   currency: string;
@@ -52,6 +69,8 @@ export interface AskFacts {
   dataNotes?: string[];
   /** Invoices and bills (only when the question is about them): totals from the books and the few largest items, so the owner can check. */
   ledger?: AskLedger;
+  /** Financial health and early warnings (only when the question is about them). */
+  insights?: InsightFacts;
   /** Where the owner can see the underlying records. */
   evidence: { label: string; href: string }[];
 }
@@ -59,10 +78,12 @@ export interface AskFacts {
 const NUM_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, a: 1 };
 
 /** Routes a question to what it asks. Plain rules, no model: unknown questions are said to be unknown, never guessed. */
-export function classify(question: string): { intent: AskIntent; lateDays: number | null; weekAsked: number | null } {
+export function classify(question: string): { intent: AskIntent; lateDays: number | null; weekAsked: number | null; topic: InsightTopic | null } {
   const r = classifyIntent(question);
-  const wk = question.toLowerCase().match(/\bweek\s*(\d{1,2})\b/);
-  return { ...r, weekAsked: wk ? Number(wk[1]) : null };
+  const q = question.toLowerCase();
+  const wk = q.match(/\bweek\s*(\d{1,2})\b/);
+  const topic: InsightTopic | null = r.intent !== "insights" ? null : /\b(overdue|receivables?|owe[sd]?|invoices?)\b/.test(q) ? "overdue" : /\b(bills?|obligations?|suppliers?)\b/.test(q) ? "bills" : /concentrat|depend/.test(q) ? "concentration" : /\b(spending|spend|unusual)\b/.test(q) ? "spending" : /\b(cash|money in|money out)\b/.test(q) ? "cash" : null;
+  return { ...r, weekAsked: wk ? Number(wk[1]) : null, topic };
 }
 
 function classifyIntent(question: string): { intent: AskIntent; lateDays: number | null } {
@@ -73,6 +94,8 @@ function classifyIntent(question: string): { intent: AskIntent; lateDays: number
   if (/\b(ignore|forget|disregard|override)\b.{0,30}\b(instructions|rules|limits|mandate|guidelines)\b|^\s*(system|assistant|developer)\s*:|you are now (allowed|able|free)|i (hereby )?authori[sz]e you|\b(reveal|show|print|tell me)\b.{0,30}\b(key|password|secret|token|credential)/.test(q)) return { intent: "action", lateDays: null };
   if (/^(please\s+)?(sign|approve|execute|run|pay|send|schedule|transfer|accept|cancel|go ahead|do it|just do|confirm)\b/.test(q) || /\b(sign|approve|execute|pay|send|transfer) (it|this|that|the plan|the supplier|them) (for me|now)\b/.test(q)) return { intent: "action", lateDays: null };
   if (/\b(late|delay|slow|longer)\b/.test(q) && /\b(pay|paid|payment|customer|invoice)/.test(q)) return { intent: "late", lateDays: lateDays && lateDays >= 1 && lateDays <= 90 ? lateDays : null };
+  // Trends and early warnings come before the refusal, borrowing and ledger rules ("financial" would otherwise read as "borrow").
+  if (/\b(trends?|warnings?|financial (health|position)|how healthy|what changed|getting (worse|better)|worry|worried|watch out|early warning|concentrat\w*|unusual|spending|bills? (rising|up))\b/.test(q)) return { intent: "insights", lateDays: null };
   if (/\b(reject|refus|say no|says no|decline|turn(s)? (it|this) down|counter|push(es)? back)/.test(q)) return { intent: "refusal", lateDays: null };
   if (/\b(missing|stale|out of date|up to date|outdated|latest data|incomplete|how (sure|accurate|reliable|certain|firm)|can i trust|what data|which data)\b/.test(q)) return { intent: "data_quality", lateDays: null };
   if (/\b(borrow|loan|lend|financ|credit|debt)\w*/.test(q)) return { intent: "avoid_borrowing", lateDays: null };
@@ -84,7 +107,7 @@ function classifyIntent(question: string): { intent: AskIntent; lateDays: number
 
 const gbp = (cur: string, minor: string | bigint) => formatMoney(money(BigInt(minor), cur), 2);
 
-export const SUGGESTIONS = ["Which invoices are overdue?","Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?"];
+export const SUGGESTIONS = ["What are my biggest financial warnings?", "Which invoices are overdue?","Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?"];
 
 /** The deterministic answer. Every figure is taken from `facts`. */
 export function ruleAnswer(intent: AskIntent, facts: AskFacts, lateDays: number | null = null, weekAsked: number | null = null): AskOutput {
@@ -139,11 +162,42 @@ export function ruleAnswer(intent: AskIntent, facts: AskFacts, lateDays: number 
       const owe = p.openCount === 0 ? "You have no unpaid supplier bills." : `You owe suppliers ${gbp(c, p.outstandingMinor)} across ${plural(p.openCount, "unpaid bill")}, and ${gbp(c, p.dueIn7Minor)} of that falls due within 7 days.`;
       return said(`${owed} ${owe} The forecast already uses these records.`);
     }
+    case "insights":
+      return insightsAnswer(facts);
     case "refusal":
       return said(`If someone refuses or counters outside your terms, nothing is committed or paid. Agreements already reached are kept on hold, and you decide: revise the terms yourself, ask for a re-plan (up to ${facts.maxReplanRounds} rounds, avoiding what was refused), or withdraw everything. Any new plan needs a new signature from you.`);
     default:
       return { answer: "I can answer questions about why you are short of cash, what a late customer would do, which invoices are overdue and which bills are due, how your plans compare, whether you can avoid borrowing, and what happens if someone refuses. I cannot answer anything else from your records.", unsupported: "Not a question I can answer from your records." };
   }
+}
+
+const TOPIC_KINDS: Record<InsightTopic, string[]> = { overdue: ["overdue_receivables"], bills: ["bills_overdue", "bills_rising"], concentration: ["receipts_concentration"], spending: ["spending_change", "large_payment"], cash: ["forecast_shortfall", "cash_deterioration", "receipts_decline"] };
+const TOPIC_NAME: Record<InsightTopic, string> = { overdue: "overdue invoices", bills: "supplier bills", concentration: "customer concentration", spending: "unusual spending", cash: "cash movements" };
+
+/** The findings a question is about: all of them, or those of the topic asked about. */
+export function relevantFindings(ins: InsightFacts): InsightFacts["findings"] {
+  return ins.topic ? ins.findings.filter((f) => TOPIC_KINDS[ins.topic!].includes(f.kind)) : ins.findings;
+}
+
+function insightsAnswer(facts: AskFacts): AskOutput {
+  const ins = facts.insights;
+  if (!ins) return { answer: "I could not read your financial-health findings just now.", unsupported: "No findings available." };
+  const found = relevantFindings(ins);
+  const caveat = ins.comparable ? "" : ` I could not compare periods: ${ins.comparableReason ?? "there is not enough history."}`;
+  if (found.length === 0) {
+    return { answer: `${ins.topic ? `I found no warning about ${TOPIC_NAME[ins.topic]} in your records as of ${ins.asOf}.` : ins.headline}${caveat} This only covers what your records show; it is not a guarantee.`.slice(0, 900), unsupported: null };
+  }
+  // Findings are added while the answer stays short; the rest are in the lines under it.
+  let text = ins.topic ? "" : `${ins.headline} `;
+  let shown = 0;
+  for (const f of found.slice(0, 3)) {
+    const next = `${f.title}: ${f.why} `;
+    if (shown > 0 && (text + next).length > 700) break;
+    text += next;
+    shown += 1;
+  }
+  const more = found.length - shown;
+  return { answer: `${text.trim()}${more > 0 ? ` There ${more === 1 ? "is 1 more finding" : `are ${more} more findings`} below.` : ""}${caveat}`.slice(0, 900), unsupported: null };
 }
 
 export const SYSTEM_PROMPT = [
@@ -184,6 +238,15 @@ export function detailLines(intent: AskIntent, facts: AskFacts, lateDays: number
     case "plan_compare":
     case "avoid_borrowing":
       return [...(facts.doNothing ? [`Doing nothing: lowest ${gbp(c, facts.doNothing.minBalanceMinor)} in week ${facts.doNothing.minBalanceWeek}.`] : []), ...facts.plans.map((p) => `Plan ${p.n}: ${p.asks.join("; ")}. Lowest ${gbp(c, p.minBalanceMinor)} (week ${p.minBalanceWeek}), cost ${gbp(c, p.totalCostMinor)}, ${p.keepsCushion ? "keeps" : "misses"} the cushion${p.usesFinance ? ", borrows" : ", no borrowing"}.`)];
+    case "insights": {
+      const ins = facts.insights;
+      if (!ins) return [];
+      const show = (fg: Figure) => (fg.kind === "money" ? gbp(c, fg.amountMinor) : fg.kind === "percent" ? `${(fg.bps / 100).toFixed(2).replace(/\.00$/, "")}%` : String(fg.value));
+      return [
+        ins.comparable ? `Compared the last ${ins.windowDays} days with the ${ins.windowDays} before.` : `Periods not compared: ${ins.comparableReason ?? "not enough history"}`,
+        ...relevantFindings(ins).flatMap((f) => [`${f.severity === "high" ? "Important" : f.severity === "medium" ? "Watch" : "Note"}: ${f.title}. ${f.figures.map((x) => `${x.label} ${show(x)}`).join("; ")}.`, ...f.uncertainty.map((u) => `  Uncertainty: ${u}`)]),
+      ];
+    }
     case "ledger":
       return [...(facts.ledger?.overdueInvoices ?? []).map((x) => `Overdue invoice ${x.number} (${x.counterparty}): ${gbp(c, x.outstandingMinor)} still owed, ${x.overdueDays} days past due.`), ...(facts.ledger?.billsDueSoon ?? []).map((x) => `Bill ${x.number} (${x.counterparty}): ${gbp(c, x.outstandingMinor)} due ${x.dueOn}.`)];
     default:

@@ -9,3 +9,4 @@ export * from "./json";
 export { applyTermChanges, adjustmentsOf, type TermChanges } from "./term-changes";
 export * from "./plans";
 export * from "./financing";
+export * from "./insights";
