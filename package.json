@@ -29,6 +29,7 @@
     "check:plan": "bun --env-file=.env scripts/plan-sanity.ts",
     "check:ledger": "bun --env-file=.env scripts/ledger-sanity.ts",
     "check:funding-decision": "bun --env-file=.env scripts/funding-decision-sanity.ts",
+    "check:adapt": "bun --env-file=.env scripts/adapt-sanity.ts",
     "check:rescue": "bun --env-file=.env scripts/rescue-sanity.ts",
     "check:insights": "bun --env-file=.env scripts/insights-sanity.ts",
     "test:browser": "bun --env-file=.env scripts/browser-journey.ts",

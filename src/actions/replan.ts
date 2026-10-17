@@ -12,7 +12,9 @@ import { toJsonValue } from "@/sandbox/proposals";
 import { buildContext, startRun, type RunOptions, type RunSummary } from "./agent-run";
 import { appendRecord } from "./log";
 import { releaseHeld, type ExecutionOutcome } from "./plan-exec";
+import { adaptNegotiation } from "./negotiation-adapt";
 import { ACTION_EVENTS, ActionError, type Db } from "./types";
+import type { Adaptation } from "@/engine/plans/adapt";
 import { planAuthorisations } from "@/db/schema";
 
 export interface ReplanResult {
@@ -27,6 +29,8 @@ export interface ReplanResult {
   message?: string;
   bestOption?: unknown;
   note?: string | null;
+  /** Why this next step (or why none): what each reply changed, every option considered, the choice and its trade-offs. */
+  adaptation?: Adaptation;
 }
 
 /** Anything the failed attempt left live in the sandbox? (It must be empty before a new plan is proposed.) */
@@ -70,7 +74,7 @@ export async function replanFromExecution(db: Db, authorisationIdInput: string, 
   const constraints = mergeConstraints(parentConstraints, outcome.constraints ?? []);
   const ctx = await buildContext(db, businessId, null, constraints);
   const refusedBecause = outcome.branches.filter((b) => b.status === "needs_replan").map((b) => ({ index: b.index, kind: b.kind, reason: b.reason ?? null }));
-  const exhausted = async (childRunId: string | null, why: string, note: string | null = null): Promise<ReplanResult> => {
+  const exhausted = async (childRunId: string | null, why: string, note: string | null = null, adaptation?: Adaptation): Promise<ReplanResult> => {
     const [last] = await db.select().from(plans).where(and(eq(plans.businessId, businessId), eq(plans.runId, run.id), eq(plans.planHash, auth.planId)));
     const bestOption = {
       kind: "last_attempted_plan",
@@ -82,18 +86,27 @@ export async function replanFromExecution(db: Db, authorisationIdInput: string, 
     const message = "No feasible plan inside the owner's constraints.";
     await db.update(agentRuns).set({ lifecycle: "exhausted", ...(childRunId ? { successorRunId: childRunId } : {}) }).where(eq(agentRuns.id, run.id));
     await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_EXHAUSTED, actor: "executor", detail: { authorisationId, runId: run.id, childRunId, round: run.round, why, constraints, refusedBecause } });
-    return { status: "exhausted", parentRunId: run.id, newRunId: childRunId, round: run.round, constraints, plans: [], message, bestOption: toJsonValue(bestOption), note };
+    return { status: "exhausted", parentRunId: run.id, newRunId: childRunId, round: run.round, constraints, plans: [], message, bestOption: toJsonValue(bestOption), note, ...(adaptation ? { adaptation } : {}) };
   };
 
-  if (run.round >= MAX_REPLAN_ROUNDS) return exhausted(null, `the limit of ${MAX_REPLAN_ROUNDS} re-plan rounds is reached`);
+  if (run.round >= MAX_REPLAN_ROUNDS) {
+    const { report } = await adaptNegotiation(db, { auth, run, outcome, constraints, ctx, childRunId: null, childPlans: [] });
+    return exhausted(null, `the limit of ${MAX_REPLAN_ROUNDS} re-plan rounds is reached`, null, report);
+  }
 
   const trigger = run.trigger;
   const child: RunSummary = await startRun(db, businessId, trigger, { ...opts, replan: { parentRunId: run.id, round: run.round + 1, constraints } });
-  if (child.status !== "completed" || child.plans.length === 0) {
+  // Adapt: read what each reply changed, test their counter-offer and every revised plan against the signed limits and the cushion, and choose.
+  const childPlans = child.status === "completed" ? child.plans : [];
+  const { report, addedPlan } = await adaptNegotiation(db, { auth, run, outcome, constraints, ctx, childRunId: child.runId, childPlans });
+  const proposed = addedPlan ? [addedPlan, ...childPlans] : childPlans;
+  const first = report.selected ? (report.selected.id === "counter" ? addedPlan?.id : report.selected.id.replace(/^plan:/, "")) : undefined;
+  const ordered = first ? [...proposed.filter((p) => p.id === first), ...proposed.filter((p) => p.id !== first)] : proposed;
+  if (ordered.length === 0) {
     await db.update(agentRuns).set({ lifecycle: "exhausted" }).where(eq(agentRuns.id, child.runId));
-    return exhausted(child.runId, child.error ?? "the constrained search found no plan", child.note);
+    return exhausted(child.runId, child.error ?? "the constrained search found no plan", child.note, report);
   }
   await db.update(agentRuns).set({ lifecycle: "replanned", successorRunId: child.runId }).where(eq(agentRuns.id, run.id));
-  await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_REPLANNED, actor: "executor", detail: { authorisationId, parentRunId: run.id, newRunId: child.runId, round: run.round + 1, constraints, planIds: child.plans.map((p) => p.id) } });
-  return { status: "replanned", parentRunId: run.id, newRunId: child.runId, round: run.round + 1, constraints, plans: child.plans, note: child.note };
+  await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_REPLANNED, actor: "executor", detail: { authorisationId, parentRunId: run.id, newRunId: child.runId, round: run.round + 1, constraints, planIds: ordered.map((p) => p.id) } });
+  return { status: "replanned", parentRunId: run.id, newRunId: child.runId, round: run.round + 1, constraints, plans: ordered, note: child.note, adaptation: report };
 }
