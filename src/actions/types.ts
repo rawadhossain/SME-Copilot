@@ -30,6 +30,8 @@ export const ACTION_EVENTS = {
   PLAN_EDIT_ASSISTED: "plan.edit_assisted",
   PLAN_LETTER_ASSISTED: "plan.letter_assisted",
   CASH_QUESTION_ASKED: "cash.question_asked",
+  SIMULATION_RUN: "simulation.run",
+  SIMULATION_HANDED_OFF: "simulation.handed_off",
   PLAN_AUTHORISATION_PROPOSED: "plan.authorisation_proposed",
   PLAN_AUTHORISATION_DENIED: "plan.authorisation_denied",
   PLAN_AUTHORISED: "plan.authorised",

@@ -85,6 +85,7 @@ export function buildForecast(input: EngineInput, options: ForecastOptions = {})
   const od = input.overdue ?? DEFAULT_OVERDUE;
   const adj: InvoiceAdjustments = { chase: [...(input.adjustments?.chase ?? []), ...(options.adjustments?.chase ?? [])], early: [...(input.adjustments?.early ?? []), ...(options.adjustments?.early ?? [])] };
   let adjustmentCost = 0n;
+  const hypoDays = (cpId: string): number => (input.hypotheticalDelays ?? []).filter((d) => d.counterpartyId === cpId).reduce((n, d) => n + d.days, 0);
 
   // 1. Open customer invoices: due date shifted by the counterparty's typical lateness.
   for (const inv of input.invoices) {
@@ -125,6 +126,12 @@ export function buildForecast(input: EngineInput, options: ForecastOptions = {})
         notes.push(`${inv.counterpartyName} agreed to pay ${early.daysEarly} days earlier for a ${early.discountBps / 100}% discount; expected ${date}.`);
       }
     }
+    const hypo = hypoDays(inv.counterpartyId);
+    if (hypo > 0) {
+      date = addDays(date, hypo);
+      kind = "assumption";
+      notes.push(`Hypothetical (simulation): ${inv.counterpartyName} pays a further ${hypo} days late; expected ${date}.`);
+    }
     if (date < asOf) date = asOf;
     items.push({
       date, amount, sourceType: "invoice", sourceId: inv.id, counterpartyId: inv.counterpartyId,
@@ -163,7 +170,7 @@ export function buildForecast(input: EngineInput, options: ForecastOptions = {})
       if (!proj) continue;
       const shift = shiftFor(cpId);
       for (const issue of proj.issueDates) {
-        const date = addDays(issue, proj.termsDays + shift);
+        const date = addDays(issue, proj.termsDays + shift + hypoDays(cpId));
         if (date < asOf || date > end) continue;
         items.push({
           date, amount: proj.amount, sourceType: "pattern_invoice", sourceId: `pattern:${cpId}:${issue}`, counterpartyId: cpId, kind: "estimate",

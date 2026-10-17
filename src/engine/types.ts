@@ -86,6 +86,11 @@ export interface EngineInput {
   commitments: CommitmentRecord[];
   /** Invoice-level agreements already in force (chase, early payment), merged with what a scenario adds. Set by recovery planning only. */
   adjustments?: InvoiceAdjustments;
+  /**
+   * HYPOTHETICAL ONLY (flight simulator): every receipt expected from this customer arrives this many days later than the forecast would
+   * otherwise say. Never set by the loader, never stored; present only on the in-memory copy a simulation works on.
+   */
+  hypotheticalDelays?: { counterpartyId: string; days: number }[];
 }
 
 export interface ForecastOptions {
