@@ -6,6 +6,7 @@ export { buildAgentTools } from "./tools";
 export { AGENT_PURPOSE, SYSTEM_PROMPT, buildMessages } from "./prompt";
 export { deterministicPlans } from "./fallback";
 export { guardRanking, demoteBlocked } from "./guard";
+export { applyStrategy, coordinateForContext, strategyPlan, theySaid } from "./strategy";
 export { buildPlanView, doNothingSummary, leverBounds, leverProblems, dryRun, describeLever, isRunnable } from "./plan-builder";
 export { ASSIST_PURPOSE, assistOutputSchema, buildAssistMessages, applyEdits, ruleEdits, type AssistChange, type AssistCounterparty } from "./edit-assist";
 export { CASH_ASK_PURPOSE, askOutputSchema, buildAskMessages, classify as classifyQuestion, ruleAnswer, detailLines, checkAskAnswer, checkRewrite, allowedFigures, SUGGESTIONS as ASK_SUGGESTIONS, type AskFacts, type AskLedger, type AskPlanFact, type AskOutput, type AskIntent, type InsightFacts, type InsightTopic } from "./cash-ask";

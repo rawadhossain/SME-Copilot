@@ -10,3 +10,4 @@ export { applyTermChanges, adjustmentsOf, type TermChanges } from "./term-change
 export * from "./plans";
 export * from "./financing";
 export * from "./insights";
+export * from "./recovery";

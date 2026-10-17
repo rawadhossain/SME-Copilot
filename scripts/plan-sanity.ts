@@ -1,6 +1,7 @@
 // Sanity checks for Batch 8a: plan authorisation, single-round negotiation, execution, verification, rollback.
 // Not a test suite. Run: bun run check:plan
 // Mock provider only (no live model). Every scenario runs on a COPY of the demo business flagged is_test; the demo is only read.
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import assert from "node:assert/strict";
 import type { TermsEntry } from "../src/actions/plan-terms";
 import { execSync } from "node:child_process";
@@ -672,6 +673,131 @@ async function main() {
       assert.ok((ranked[2].warnings ?? []).length > 0 && !/^recommended/i.test(ranked[2].title), "and it is flagged and no longer called the recommendation");
       assert.deepEqual(demoteBlocked([mk("a", ["limit"]), mk("b", ["limit"])]).map((p) => p.id), ["a", "b"], "if every plan is blocked the order is unchanged");
       console.log("  14 blocked plans: demoted behind plans that can run, flagged, no longer recommended");
+    }
+
+    // ================= 16. Coordinated strategy, end to end (the plan the coordinator itself produced, not a hand-made one) =================
+    {
+      const { randomUUID } = await import("node:crypto");
+      const { requestSecondApproval, confirmSecond, previewAuthorisation: preview } = await import("../src/actions/plan-authorise");
+      const { coordinateForContext, dryRun } = await import("../src/agent");
+      const { applyTermChanges, adjustmentsOf, buildForecast } = await import("../src/engine");
+      const { leversToChanges } = await import("../src/engine/plans");
+      const storedStrategy = async (runId: string) => {
+        const ps = await db.select().from(S.plans).where(eq(S.plans.runId, runId));
+        return ps.map((p) => p.plan as any).filter((p) => p.strategy);
+      };
+      const weeksOk = (ctx: any, levers: Lever[]) => { // independent route: term changes + forecast, not simulateLevers
+        const ch = leversToChanges(levers, ctx.financeFeeBps);
+        const f = buildForecast(ctx.input, { events: applyTermChanges(ctx.pending.map((p: any) => p.event), ch), horizonWeeks: ctx.horizonWeeks, adjustments: adjustmentsOf(ch) });
+        const docs2 = f.items.filter((i) => i.sourceType === "invoice" || i.sourceType === "bill").map((i) => `${i.sourceType}:${i.sourceId}`);
+        return { all: f.weeks.every((w) => w.closing >= ctx.input.reserve), min: f.minimum.amount, dupes: new Set(docs2).size === docs2.length };
+      };
+
+      // 16a. Closes the gap on an independent forecast; cannot run before the second approval; runs; the verifier checks the sandbox, not the proposal.
+      const X = await setup("X");
+      const sx = await storedStrategy(X.runId);
+      assert.ok(sx.length >= 1, "the planning run produced a coordinated strategy plan");
+      const px = sx[0];
+      const wk = weeksOk(X.ctx, px.levers);
+      assert.ok(wk.dupes, "no invoice or bill appears twice in the combined forecast");
+      assert.equal(wk.min.toString(), px.metrics.minBalanceMinor, "the stored figures are the independent recomputation");
+      assert.equal(wk.all, px.strategy.verdict !== "partial", "every week keeps the cushion exactly when the strategy says it closes the gap");
+      assert.ok(dryRun(X.ctx, px.levers).every((c) => c.decision !== "deny"), "no action in the strategy is denied by the gate dry-run");
+      const owner1 = { id: randomUUID(), name: "Alex Owner" };
+      const sam = { id: randomUUID(), name: "Sam Approver", role: "approver" };
+      const rv = (await preview(db, X.biz.id, { runId: X.runId, confirmations: 2, planId: px.id })) as unknown as { summary: { schedule: unknown[] } };
+      const waitingX = await requestSecondApproval(db, X.biz.id, { runId: X.runId, planId: px.id, confirmations: 2 }, owner1);
+      assert.equal(waitingX.status, "awaiting_second");
+      await assert.rejects(executePlan(db, waitingX.authorisationId), /never signed/, "the strategy cannot run before the second approval");
+      const c0 = await sandboxCounts(X.biz.id);
+      assert.equal(c0.threads + c0.apps + c0.payments, 0, "nothing was sent while waiting");
+      await assert.rejects(confirmSecond(db, X.biz.id, waitingX.authorisationId, { ...sam, id: owner1.id }, "approve"), /different person/);
+      assert.equal((await confirmSecond(db, X.biz.id, waitingX.authorisationId, sam, "approve")).status, "authorised");
+      // The first execution asks real (simulated) counterparties. A pushback is normal: the planner never predicts acceptance. Follow the
+      // existing path (constraint learned, replan, a NEW signature) until a coordinated strategy is accepted, and check every revised strategy.
+      let ranX = await executePlan(db, waitingX.authorisationId);
+      let finalAuth = waitingX.authorisationId;
+      let finalPlan = px;
+      let finalRunId = X.runId;
+      const story: string[] = [`round 0 ${ranX.status}`];
+      for (let round = 1; ranX.status === "needs_replan" && round <= 3; round++) {
+        const refused = ranX.outcome.constraints;
+        assert.ok(refused.length > 0, "a pushback is stored as structured constraints");
+        const rp = await replanFromExecution(db, finalAuth, { forceFallback: true });
+        assert.equal(await executePlanGuard(X.biz.id), round - 1, "replanning executed nothing new");
+        if (rp.status !== "replanned") { story.push(`round ${round} exhausted`); break; }
+        for (const p of rp.plans) {
+          for (const c of refused) if (c.excluded) assert.ok(!p.levers.some((l) => l.kind === c.kind && l.counterpartyId === c.counterpartyId), "a refused action is not proposed again");
+          if (p.strategy) assert.equal(p.strategy.verdict === "partial", BigInt(p.metrics.minBalanceMinor) < X.ctx.input.reserve, "the revised strategy states accurately whether it still closes the gap");
+        }
+        const next = rp.plans.find((p) => p.strategy && p.strategy.verdict !== "partial") ?? rp.plans.find((p) => p.strategy);
+        if (!next) { story.push(`round ${round} replanned without a strategy plan`); break; }
+        const a2 = await authorisePlan(db, X.biz.id, { runId: rp.newRunId!, planId: next.id, confirmations: 2 }, "Test Owner");
+        assert.equal(a2.status, "authorised", "the revised strategy needs and gets a NEW authorisation");
+        assert.notEqual(a2.authorisationId, finalAuth);
+        ranX = await executePlan(db, a2.authorisationId);
+        finalAuth = a2.authorisationId; finalPlan = next; finalRunId = rp.newRunId!;
+        story.push(`round ${round} (${next.strategy!.verdict}, ${next.levers.map((l: Lever) => l.kind).join("+")}) ${ranX.status}`);
+      }
+      assert.equal(ranX.status, "completed", `no coordinated strategy completed: ${story.join("; ")} ${JSON.stringify(ranX.verification?.explanation ?? ranX.outcome.failure)}`);
+      assert.ok(ranX.verification?.ok && ranX.verification.metrics.every((m) => m.ok), "verified");
+      if (finalPlan.strategy.verdict !== "partial") assert.ok(BigInt(ranX.verification!.metrics[0].actual!) >= X.ctx.input.reserve, "the lowest balance recomputed from what the sandbox holds keeps the cushion");
+      if (finalRunId === X.runId) assert.equal(rv.summary.schedule.length, ranX.outcome.scheduled.length, "the signing review listed exactly what was scheduled");
+      // The verifier reads the sandbox, not the plan: change an agreed term behind its back and it must object.
+      const ths = await rows<{ id: string; agreed_terms: Record<string, number> }>`SELECT id, agreed_terms FROM sandbox_threads WHERE business_id = ${X.biz.id} AND status = 'agreed'`;
+      const th = ths.find((t) => t.agreed_terms && Object.values(t.agreed_terms).some((v) => typeof v === "number"));
+      assert.ok(th, "there is an agreed term to tamper with");
+      const key = Object.entries(th!.agreed_terms).find(([, v]) => typeof v === "number")![0];
+      await owner`UPDATE sandbox_threads SET agreed_terms = jsonb_set(agreed_terms, ${[key]}, ${String(th!.agreed_terms[key] + (key.includes("Bps") ? 500 : 9))}::jsonb) WHERE id = ${th!.id}`;
+      assert.equal((await verifyPlanExecution(db, finalAuth)).ok, false, "the verifier fails when the sandbox no longer matches the plan");
+      await chainOk(X.biz.id);
+      console.log(`  16a coordinated strategy: independent forecast agrees; waited unsigned for the second approver; ${story.join(" -> ")}; the accepted one ran and was verified from the sandbox (${ranX.outcome.scheduled.length} items, ${finalPlan.strategy.verdict}); changing an agreed term afterwards made verification fail`);
+
+
+      // 16c. Signed limits shape the strategy: a tighter signed mandate changes what is proposed; an over-limit lever is denied at signing.
+      const Z = await setup("Z");
+      const [mz] = await rows<{ canonical: string }>`SELECT canonical FROM mandates WHERE business_id = ${Z.biz.id} AND active`;
+      const wz = JSON.parse(mz.canonical);
+      wz.version = 2; wz.limits.maxPaymentMinor = "3000000"; wz.limits.maxFinanceAdvanceBps = 3000;
+      const sz = signMandate(wz);
+      await owner`UPDATE mandates SET active = false WHERE business_id = ${Z.biz.id}`;
+      await owner`INSERT INTO mandates (business_id, version, canonical, signature, active) VALUES (${Z.biz.id}, 2, ${sz.canonical}, ${sz.signature}, true)`;
+      const ctxZ = await buildContext(db, Z.biz.id, null);
+      const cz = coordinateForContext(ctxZ);
+      assert.ok(cz, "the tighter mandate is valid");
+      if (cz!.selected) {
+        for (const l of cz!.selected.levers) if (l.kind === "finance_invoice") assert.ok(l.advanceBps <= 3000, "the advance never exceeds the signed cap");
+        assert.ok(dryRun(ctxZ, cz!.selected.levers).every((c) => c.decision !== "deny"), "everything proposed passes the gate dry-run");
+        assert.ok(weeksOk(ctxZ, cz!.selected.levers).dupes);
+      }
+      const rz = await startRun(db, Z.biz.id, { type: "shortage", variant: "baseline" }, { gateway: mockGw, forceFallback: true });
+      for (const p of rz.plans) {
+        assert.ok(p.levers.every((l) => l.kind !== "finance_invoice" || l.advanceBps <= 3000), "no plan exceeds the signed finance cap");
+        if (p.strategy) assert.equal(p.blockers?.length ?? 0, 0, "a strategy plan never carries a payment that would break a signed limit");
+      }
+      const overcap = await Z.addPlan([{ kind: "finance_invoice", counterpartyId: Z.lenderId, advanceBps: 8000 }], true);
+      assert.equal((await authorisePlan(db, Z.biz.id, { runId: Z.runId, confirmations: 2, planId: overcap.id }, "Test Owner")).status, "denied", "signing denies a lever beyond the signed limit");
+      console.log(`  16c tighter signed limits (payment GBP 30,000, finance 30%): strategy ${cz!.verdict}${cz!.selected ? " using " + cz!.selected.levers.map((l) => l.kind).join("+") : ""}; nothing over the cap proposed; an over-cap plan is denied at signing`);
+
+      // 16d. Failure part-way through the coordinated plan: the existing rollback leaves nothing half-done and records it.
+      const F = await setup("F");
+      // The levers of the strategy that the counterparties accepted in 16a, so execution reaches the scheduling steps before the injected failure.
+      const sf = await F.addPlan(finalPlan.levers.map((l: Lever) => ({ ...l, counterpartyId: l.kind.startsWith("supplier") ? F.supplierId : l.kind === "finance_invoice" ? F.lenderId : F.buyerId })));
+      const nItems = ((await preview(db, F.biz.id, { runId: F.runId, confirmations: 2, planId: sf.id })) as unknown as { summary: { schedule: unknown[] } }).summary.schedule.length;
+      assert.ok(nItems > 0, "the plan schedules something to fail part-way through");
+      const authF = await authorisePlan(db, F.biz.id, { runId: F.runId, confirmations: 2, planId: sf.id }, "Test Owner");
+      assert.equal(authF.status, "authorised");
+      const stepF = `schedule:${Math.min(1, nItems - 1)}`;
+      const runF = await executePlan(db, authF.authorisationId, { beforeStep: (step) => { if (step === stepF) throw new Error("injected failure part-way through the coordinated plan"); } });
+      assert.equal(runF.status, "rolled_back");
+      assert.equal(runF.outcome.committed, false);
+      assert.ok(runF.outcome.compensated.length > 0 && runF.outcome.compensated.every((c) => c.ok), "everything made live was withdrawn");
+      const left = await rows<{ n: number }>`SELECT (SELECT count(*) FROM sandbox_threads WHERE business_id = ${F.biz.id} AND status = 'agreed') + (SELECT count(*) FROM sandbox_applications WHERE business_id = ${F.biz.id} AND status IN ('offered','accepted')) + (SELECT count(*) FROM sandbox_receipts WHERE business_id = ${F.biz.id} AND status = 'scheduled') + (SELECT count(*) FROM sandbox_payments WHERE business_id = ${F.biz.id} AND status = 'scheduled') AS n`;
+      assert.equal(Number(left[0].n), 0, "nothing agreed, accepted or scheduled remains");
+      const evF = ((await getEvidence(db, F.biz.id)) as { records: { event: string }[] }).records.map((r) => r.event);
+      assert.ok(evF.includes("plan.compensated") && evF.includes("plan.execution_failed"), "the rollback is recorded");
+      await chainOk(F.biz.id);
+      console.log(`  16d failure injected at ${stepF}: ${runF.status}; ${runF.outcome.compensated.length} withdrawals, nothing left live, rollback recorded in the log`);
     }
 
     // ================= 8. Layering =====

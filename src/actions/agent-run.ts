@@ -11,7 +11,7 @@ import { z } from "zod";
 import { appendActionRecord } from "@/actionlog";
 import { ACTION_EVENTS, ActionError, type Db } from "./types";
 import { loadGateState, loadSignedMandate } from "./state";
-import { guardRanking, demoteBlocked, buildAgentTools, buildMessages, deterministicPlans, AGENT_PURPOSE, collectNumbers, doNothingSummary, type AgentToolContext, type PendingEvent } from "@/agent";
+import { applyStrategy, guardRanking, demoteBlocked, buildAgentTools, buildMessages, deterministicPlans, AGENT_PURPOSE, collectNumbers, doNothingSummary, type AgentToolContext, type PendingEvent } from "@/agent";
 import { getGateway, type Gateway } from "@/ai";
 import { dbCallLogger } from "@/ai/db-logger";
 import { agentRuns, agentSteps, counterparties, documents, extractions, fundingOffers, plans as plansTable } from "@/db/schema";
@@ -27,10 +27,13 @@ import { mapExtractionToEvents } from "@/ingest/documents/map";
 import { getExtractionById } from "@/ingest/documents/store";
 import type { ExtractionResult } from "@/ingest/documents/validate";
 import { toJsonValue } from "@/sandbox/proposals";
+import { loadKnownConstraints } from "./negotiation-memory";
 
 export const triggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("commitment"), extractionId: z.string().uuid() }),
   z.object({ type: z.literal("shortage"), variant: z.enum(["baseline", "downside"]).default("baseline"), reason: shortageReasonSchema.optional() }),
+  /** An approved strategy is no longer on track (src/actions/recovery.ts). Planned from the current books and sandbox, never from the old forecast. */
+  z.object({ type: z.literal("recovery"), caseId: z.string().uuid(), reason: shortageReasonSchema.optional() }),
 ]);
 export type Trigger = z.output<typeof triggerSchema>;
 
@@ -56,6 +59,10 @@ export interface RunOptions {
   limits?: Partial<ReturnType<typeof agentLimits>>;
   /** Re-planning (ADR-021): the run this one re-plans, its round, and the structured constraints it must respect. */
   replan?: { parentRunId: string; round: number; constraints: Constraint[] };
+  /** Recovery (src/actions/recovery.ts): put the snapshot in the state of the world as it is now (agreements in force, late receipts) before planning. */
+  prepare?: (ctx: AgentToolContext) => void | Promise<void>;
+  /** Recovery: last look at the plans before they are stored (add what the owner must know). May not change levers. */
+  refine?: (plans: PlanView[], ctx: AgentToolContext) => PlanView[];
 }
 
 export interface RunSummary {
@@ -110,12 +117,14 @@ export async function buildContext(db: Db, businessId: string, mustInclude: stri
 export async function startRun(db: Db, businessId: string, triggerInput: unknown, opts: RunOptions = {}): Promise<RunSummary> {
   const trigger = triggerSchema.parse(triggerInput);
   const gw = opts.gateway ?? getGateway();
-  const [run] = await db.insert(agentRuns).values({ businessId, trigger, status: "running", model: gw.config.model || "mock", mode: `${gw.config.provider}/${gw.config.mode}`, parentRunId: opts.replan?.parentRunId ?? null, round: opts.replan?.round ?? 0, constraints: JSON.parse(JSON.stringify(opts.replan?.constraints ?? [])) }).returning();
+  // A re-plan carries what its chain learned; a fresh run starts from what the counterparties already told us in recent structured replies.
+  const startConstraints = opts.replan?.constraints ?? (await loadKnownConstraints(db, businessId));
+  const [run] = await db.insert(agentRuns).values({ businessId, trigger, status: "running", model: gw.config.model || "mock", mode: `${gw.config.provider}/${gw.config.mode}`, parentRunId: opts.replan?.parentRunId ?? null, round: opts.replan?.round ?? 0, constraints: JSON.parse(JSON.stringify(startConstraints)) }).returning();
   let seq = 0;
   const step = async (kind: "llm_message" | "tool_call" | "tool_result" | "validation" | "note", payload: unknown) => {
     await db.insert(agentSteps).values({ businessId, runId: run.id, seq: ++seq, kind, payload: toJsonValue(payload) as Record<string, unknown> });
   };
-  await appendActionRecord(db, { businessId, event: ACTION_EVENTS.AGENT_RUN_STARTED, actor: "agent", detail: { runId: run.id, trigger, parentRunId: opts.replan?.parentRunId ?? null, round: opts.replan?.round ?? 0, constraints: opts.replan?.constraints ?? [] } });
+  await appendActionRecord(db, { businessId, event: ACTION_EVENTS.AGENT_RUN_STARTED, actor: "agent", detail: { runId: run.id, trigger, parentRunId: opts.replan?.parentRunId ?? null, round: opts.replan?.round ?? 0, constraints: startConstraints } });
 
   const finish = async (status: "completed" | "failed" | "refused", planSource: "ai" | "deterministic" | "none", error: string | null) => {
     await db.update(agentRuns).set({ status, planSource, finishedAt: new Date(), error }).where(eq(agentRuns.id, run.id));
@@ -141,8 +150,9 @@ export async function startRun(db: Db, businessId: string, triggerInput: unknown
       mustInclude = row.id;
     }
 
-    const ctx = await buildContext(db, businessId, mustInclude, opts.replan?.constraints ?? []);
-    if (trigger.type === "shortage") ctx.shortage = trigger.reason ?? null;
+    const ctx = await buildContext(db, businessId, mustInclude, startConstraints);
+    if (trigger.type === "shortage" || trigger.type === "recovery") ctx.shortage = trigger.reason ?? null;
+    await opts.prepare?.(ctx);
     await step("note", { type: "context", asOf: ctx.asOf, horizonWeeks: ctx.horizonWeeks, pending: ctx.pending.map((p) => ({ ref: p.ref, kind: p.event.kind, date: p.event.date, amountMinor: p.event.amountMinor.toString() })), mandateSigned: ctx.mandate !== null });
 
     // 1. The AI path (bounded tool loop through the gateway).
@@ -179,6 +189,15 @@ export async function startRun(db: Db, businessId: string, triggerInput: unknown
       plans = g.plans;
       for (const n of g.notes) await step("validation", n);
     }
+    if (plans.length > 0 || source === "none") {
+      // Combined strategy (pure, deterministic): the best feasible combination of levers, evaluated as a whole forecast. It is added or put first only
+      // when it is better; it is still only a proposal that goes through the same review, signing, gate and verification as any plan.
+      const s = applyStrategy(ctx, plans, source);
+      plans = s.plans;
+      if (source === "none" && plans.length > 0) source = "deterministic";
+      for (const n of s.notes) await step("note", n);
+    }
+    if (opts.refine) plans = opts.refine(plans, ctx);
     plans = demoteBlocked(plans); // either source: a plan that cannot run is never ranked above one that can
     await step("note", { type: "do_nothing", metrics: doNothingSummary(ctx) });
     if (plans.length > 0) {

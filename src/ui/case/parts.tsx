@@ -169,7 +169,8 @@ export function PlanTable({ run, names, cur, selected, onSelect, onSign, onEdit,
       {run.plans.map((p: any, i: number) => selected === p.id && (
         <div key={p.id} className="mt-4 rounded-xl border border-line bg-white/60 p-4 text-sm">
           <p className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-soft">Assistant&apos;s explanation of plan {i + 1} <Chip tone="neutral">{p.plan.source === "owner" ? "adjusted by you; every number is recomputed by the engine" : `written by the ${p.plan.source === "ai" ? "AI" : "planner"}; numbers are not taken from it`}</Chip></p>
-          <p className="text-ink-soft">{p.plan.rationale}</p>
+          {!p.plan.strategy && <p className="text-ink-soft">{p.plan.rationale}</p>}
+          {p.plan.strategy && <StrategyNotes s={p.plan.strategy} />}
           <details className="mt-2"><summary className="cursor-pointer text-xs text-accent">Assumptions</summary><ul className="mt-1 list-disc pl-5 text-xs text-ink-soft">{(p.plan.assumptions ?? []).map((a: string, k: number) => <li key={k}>{a}</li>)}</ul></details>
         </div>
       ))}
@@ -330,6 +331,23 @@ export function VerificationPanel({ v, cur }: { v: any; cur: string }) {
       {v.promiseVsAgreed && <p className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm"><Chip tone={dir === "worse" ? "caution" : dir === "better" ? "good" : "neutral"}>{dir === "same" ? "as planned" : dir}</Chip> <span className="ml-1">{v.promiseVsAgreed.label}</span></p>}
       <p className="text-sm text-ink-soft">Scheduled payments and receipts: {v.schedule.found} of {v.schedule.expected} found, {v.schedule.ok ? "all as the agreed terms imply" : "PROBLEM: " + v.schedule.problems.join("; ")}.</p>
       {v.explanation?.length > 0 && <ul className="list-disc pl-5 text-sm text-ink-soft">{v.explanation.map((e: string, i: number) => <li key={i}>{e}</li>)}</ul>}
+    </div>
+  );
+}
+
+/** Why a combined plan was chosen, what it beat, what it relies on and what risk remains (all written by code from engine figures). */
+function StrategyNotes({ s }: { s: any }) {
+  const list = (items: string[]) => <ul className="mt-1 list-disc pl-5 text-xs text-ink-soft">{items.map((t, i) => <li key={i}>{t}</li>)}</ul>;
+  return (
+    <div className="mt-2 text-xs">
+      <p className="font-medium text-ink">{s.headline}</p>
+      {list(s.why)}
+      {s.parts.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-accent">What each action contributes</summary>{list(s.parts)}</details>}
+      {s.compared.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-accent">What it was compared with</summary>{list(s.compared)}</details>}
+      {(s.known?.length > 0 || s.untested?.length > 0) && <details className="mt-1"><summary className="cursor-pointer text-accent">What is known and what is only assumed</summary>{list([...(s.known ?? []), ...(s.untested ?? [])])}</details>}
+      {(s.room?.length > 0 || s.ifRefused?.length > 0) && <details className="mt-1"><summary className="cursor-pointer text-accent">If they counter or refuse</summary>{list([...(s.room ?? []), ...(s.ifRefused ?? [])])}</details>}
+      <details className="mt-1"><summary className="cursor-pointer text-accent">Risks that remain</summary>{list(s.risks)}</details>
+      <details className="mt-1"><summary className="cursor-pointer text-accent">Checks and what it relies on</summary>{list([...s.checks, ...s.assumptions])}</details>
     </div>
   );
 }

@@ -45,7 +45,7 @@ export function leverBounds(ctx: AgentToolContext) {
   const allowed = (kind: Lever["kind"]) => m.ok && (m.mandate.limits.allowedProposalKinds as string[]).includes(KIND_TO_PROPOSAL[kind]);
   // Constraints learned from counterparty replies (ADR-021) narrow the bounds; a refused lever is unavailable.
   const cs = ctx.constraints;
-  const refused = (kind: Lever["kind"], cpId: string | null) => cs.some((c) => c.kind === kind && c.counterpartyId === cpId && c.excluded);
+  const refused = (kind: Lever["kind"], cpId: string | null) => cs.some((c) => c.kind === kind && c.counterpartyId === cpId && c.excluded) || (ctx.unavailable ?? []).some((u) => u.kind === kind && u.counterpartyId === cpId);
   const depMin = Math.max(1, ...cs.filter((c) => c.kind === "supplier_reduce_deposit" && c.counterpartyId === ctx.parties.supplierId).map((c) => c.minPercentBps ?? 1));
   const deferMax = Math.min(MAX_DEFER_DAYS, ...cs.filter((c) => c.kind === "supplier_defer_balance" && c.counterpartyId === ctx.parties.supplierId).map((c) => c.maxDays ?? MAX_DEFER_DAYS));
   const buyMax = Math.min(MAX_BUYER_DEPOSIT_BPS, ...cs.filter((c) => c.kind === "buyer_request_deposit" && c.counterpartyId === ctx.parties.buyerId).map((c) => c.maxPercentBps ?? MAX_BUYER_DEPOSIT_BPS));

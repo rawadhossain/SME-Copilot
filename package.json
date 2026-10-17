@@ -31,6 +31,8 @@
     "check:funding-decision": "bun --env-file=.env scripts/funding-decision-sanity.ts",
     "check:adapt": "bun --env-file=.env scripts/adapt-sanity.ts",
     "check:rescue": "bun --env-file=.env scripts/rescue-sanity.ts",
+    "check:strategy": "bun --env-file=.env scripts/strategy-sanity.ts",
+    "check:recovery": "bun --env-file=.env scripts/recovery-sanity.ts",
     "check:insights": "bun --env-file=.env scripts/insights-sanity.ts",
     "test:browser": "bun --env-file=.env scripts/browser-journey.ts",
     "ask:live": "bun --env-file=.env scripts/ask-live.ts",

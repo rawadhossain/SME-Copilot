@@ -54,6 +54,11 @@ export async function checkAuthorisationCurrent(db: Db, authorisationId: string)
   if (!base.ok) return base;
   const { auth } = base;
   if (auth.status !== "authorised" && auth.status !== "used") return { ok: false, reason: `The plan authorisation is ${auth.status}` };
+  if (auth.status === "authorised") {
+    // An approval is for the facts it was given on. A newer plan that replaced this run (recovery, shortage) makes it stale; a run already underway (used) is not stopped.
+    const [run] = await db.select({ lifecycle: agentRuns.lifecycle }).from(agentRuns).where(eq(agentRuns.id, auth.runId));
+    if (run?.lifecycle === "superseded") return { ok: false, reason: "The plan was replaced by a newer plan after the facts changed; this approval can no longer be used" };
+  }
   const asOf = await worldDate(db, auth.businessId);
   if (isExpired(asOf, auth.expiresAt)) return { ok: false, reason: `The plan authorisation expired at ${auth.expiresAt.toISOString()}` };
   const signed = await loadSignedMandate(db, auth.businessId);
