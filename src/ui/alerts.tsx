@@ -5,7 +5,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Btn, Card, Chip, type Tone } from "./kit";
+import { Btn, Card, Chip, DeepLink, type Tone } from "./kit";
+import { Icon } from "./icons";
 import { call, useSession } from "./session";
 
 interface AlertsState {
@@ -62,7 +63,7 @@ export function HeaderAlerts() {
   const { badge, alerts } = useAlerts();
   if (badge === 0) return null;
   const urgent = alerts.some((a) => a.status === "open" && a.severity === "urgent");
-  return <Link href="/room" className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${urgent ? "border-danger/40 bg-danger/10 text-danger" : "border-caution/40 bg-caution/10 text-caution"}`}>{badge} open alert{badge === 1 ? "" : "s"}{urgent ? " · urgent" : ""}</Link>;
+  return <Link href="/room" className={`press inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium ${urgent ? "border-danger/30 bg-danger-soft text-danger" : "border-caution/30 bg-caution-soft text-caution"}`}><Icon name="info" size={13} />{badge} open alert{badge === 1 ? "" : "s"}{urgent ? " · urgent" : ""}</Link>;
 }
 
 const SEVERITY: Record<string, { label: string; tone: Tone }> = {
@@ -91,46 +92,43 @@ export function AlertsPanel() {
 
   return (
     <Card title="Alerts" tone={open.some((a) => a.severity === "urgent") ? "danger" : open.length > 0 ? "caution" : "good"}
-      subtitle="Things the assistant noticed in your books. It checks automatically; it never acts on them by itself, except to prepare a recovery for you to review."
-      right={<Btn variant="ghost" busy={busy === "check"} onClick={async () => { setBusy("check"); await checkNow(); setBusy(null); }}>Check now</Btn>}>
+      right={<Btn variant="ghost" size="sm" className="-mr-2" busy={busy === "check"} onClick={async () => { setBusy("check"); await checkNow(); setBusy(null); }}><Icon name="refresh" size={14} />Check now</Btn>}>
       {open.length === 0 ? (
-        <div>
-          <p className="font-medium">Nothing needs your attention</p>
-          <p className="text-sm text-ink-soft">{lastRunAt ? `Last checked ${ago(lastRunAt)}.` : "Not checked yet."}{seen.length > 0 ? ` ${seen.length} earlier alert${seen.length === 1 ? " is" : "s are"} under “Seen”.` : ""}</p>
+        <div className="flex items-start gap-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-good-soft text-good" aria-hidden><Icon name="check" size={16} /></span>
+          <div>
+            <p className="font-medium">Nothing needs your attention</p>
+            <p className="text-xs text-ink-soft">{lastRunAt ? `Checked ${ago(lastRunAt)}` : "Not checked yet"}{seen.length > 0 ? ` · ${seen.length} seen` : ""}</p>
+          </div>
         </div>
       ) : (
-        <ul className="space-y-3">
+        <ul className="-my-1 divide-y divide-line">
           {open.map((a) => {
             const sev = SEVERITY[a.severity] ?? SEVERITY.info;
             const route = a.refs?.route ?? "/room";
             return (
-              <li key={a.id} className="rounded-xl border border-line p-4">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <Chip tone={sev.tone}>{sev.label}</Chip>
-                    <p className="mt-2 font-medium">{a.title}</p>
-                    <p className="mt-1 text-sm">{a.detail}</p>
-                    <p className="mt-1 text-xs text-ink-soft">First noticed {ago(a.firstSeenAt)}.</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Btn href={route}>{a.refs?.label ?? "Open"}</Btn>
-                    <Btn variant="secondary" busy={busy === a.id} onClick={async () => { setBusy(a.id); await acknowledge(a.id); setBusy(null); }}>Got it</Btn>
-                  </div>
+              <li key={a.id} className="py-3.5">
+                <Chip tone={sev.tone}>{sev.label}</Chip>
+                <p className="mt-2 text-[15px] font-medium leading-snug">{a.title}</p>
+                <p className="mt-1 line-clamp-2 text-[13px] text-ink-soft">{a.detail}</p>
+                <div className="mt-2.5 flex items-center justify-between gap-2">
+                  <DeepLink href={route}>{a.refs?.label ?? "Open"}</DeepLink>
+                  <Btn variant="ghost" size="sm" className="-mr-2 text-ink-soft" busy={busy === a.id} onClick={async () => { setBusy(a.id); await acknowledge(a.id); setBusy(null); }}>Got it</Btn>
                 </div>
               </li>
             );
           })}
         </ul>
       )}
-      {open.length > 0 && lastRunAt && <p className="mt-3 text-xs text-ink-soft">Last checked {ago(lastRunAt)}.</p>}
+      {open.length > 0 && lastRunAt && <p className="mt-3 text-xs text-ink-soft">Checked {ago(lastRunAt)}</p>}
       {seen.length > 0 && (
-        <details className="mt-4">
+        <details className="mt-3 border-t border-line pt-3">
           <summary className="cursor-pointer text-sm font-medium">Seen ({seen.length})</summary>
           <ul className="mt-2 space-y-2 text-sm">
             {seen.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-2 border-t border-line pt-2">
-                <span><b>{a.title}</b> <span className="text-ink-soft">({(SEVERITY[a.severity] ?? SEVERITY.info).label.toLowerCase()}; marked as seen by {a.acknowledgedBy ?? "someone"})</span></span>
-                <a href={a.refs?.route ?? "/room"} className="text-accent underline">{a.refs?.label ?? "Open"}</a>
+              <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                <span><b className="font-medium">{a.title}</b> <span className="text-ink-soft">({(SEVERITY[a.severity] ?? SEVERITY.info).label.toLowerCase()}; seen by {a.acknowledgedBy ?? "someone"})</span></span>
+                <DeepLink href={a.refs?.route ?? "/room"}>{a.refs?.label ?? "Open"}</DeepLink>
               </li>
             ))}
           </ul>

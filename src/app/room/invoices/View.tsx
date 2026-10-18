@@ -3,7 +3,8 @@
 // Invoices & bills: what customers owe the business and what it owes suppliers, with partial payments and a payment history.
 // The browser does no money arithmetic: amounts go to the server as typed, and every figure shown comes back from the server's code.
 import { useCallback, useEffect, useState } from "react";
-import { Btn, Card, Chip, Empty, ErrorNote, Field, Loading, Stat, Th, inputClass, type Tone } from "@/ui/kit";
+import { Btn, Card, Chip, Empty, ErrorNote, Field, Loading, Metric, PageHead, Table, Tabs, Th, inputClass, type Tone } from "@/ui/kit";
+import { Icon } from "@/ui/icons";
 import { date, money } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 
@@ -30,6 +31,7 @@ export default function View() {
   const [kind, setKind] = useState<Kind>("invoice");
   const [filter, setFilter] = useState("open");
   const [focus, setFocus] = useState<string | null>(null);
+  const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
@@ -50,57 +52,43 @@ export default function View() {
   if (err && !data) return <ErrorNote>{err}</ErrorNote>;
   if (!data) return <Loading label="Loading invoices and bills" />;
 
-  const rows: any[] = (kind === "invoice" ? data.invoices : data.bills).filter((d: any) => matches(filter, d.state) || d.id === focus);
+  const rows: any[] = (kind === "invoice" ? data.invoices : data.bills).filter((d: any) => (matches(filter, d.state) && `${d.number} ${d.counterpartyName}`.toLowerCase().includes(q.trim().toLowerCase())) || d.id === focus);
   const sum = kind === "invoice" ? data.summary.receivable : data.summary.payable;
+  const overduePct = BigInt(sum.outstandingMinor) > 0n ? Number((BigInt(sum.overdueMinor) * 1000n) / BigInt(sum.outstandingMinor)) / 10 : 0;
   const who = kind === "invoice" ? "customer" : "supplier";
   const bankMatches: any[] = data.bankMatches.filter((m: any) => m.docKind === kind);
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="display text-3xl">Invoices & bills</h1>
-          <p className="text-sm text-ink-soft">Record what customers owe you and what you owe suppliers. The cash forecast, the shortage check and the assistant all use these records, as of {date(data.asOf)}.</p>
-        </div>
-        {isOwner && <Btn onClick={() => setAdding((a) => !a)}>{adding ? "Close" : `Add ${kind === "invoice" ? "an invoice" : "a bill"}`}</Btn>}
-      </div>
+      <PageHead title="Books" sub={`As of ${date(data.asOf)}`} info="What customers owe you and what you owe suppliers. The forecast reads these records, so a payment or a new invoice moves it."
+        actions={isOwner ? <Btn onClick={() => setAdding((a) => !a)}><Icon name={adding ? "close" : "plus"} size={16} />{adding ? "Close" : `Add ${kind === "invoice" ? "an invoice" : "a bill"}`}</Btn> : undefined} />
 
-      <div role="tablist" aria-label="Invoices or bills" className="flex gap-1 border-b border-line">
-        {(["invoice", "bill"] as Kind[]).map((k) => (
-          <button key={k} role="tab" aria-selected={kind === k} onClick={() => { setKind(k); setAdding(false); }} className={`border-b-2 px-4 py-2 text-sm font-medium ${kind === k ? "border-accent text-accent" : "border-transparent text-ink-soft hover:text-ink"}`}>
-            {k === "invoice" ? "Invoices (owed to you)" : "Bills (you owe)"}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label={kind === "invoice" ? "Still owed to you" : "Still to pay"} value={money(sum.outstandingMinor, cur)} sub={`${sum.openCount} unpaid${sum.partlyPaidCount ? `, ${sum.partlyPaidCount} part paid` : ""}`} />
-        <Stat label="Overdue" value={money(sum.overdueMinor, cur)} sub={`${sum.overdueCount} ${kind === "invoice" ? "invoice" : "bill"}${sum.overdueCount === 1 ? "" : "s"}`} tone={sum.overdueCount > 0 ? "danger" : undefined} />
-        <Stat label="Due in 7 days" value={money(sum.dueIn7Minor, cur)} sub={`${money(sum.dueIn30Minor, cur)} in 30 days`} />
-        <Stat label="Counted in the forecast" value={money(sum.inForecastMinor, cur)} sub={`next ${data.horizonWeeks} weeks${sum.countedElsewhereCount ? `; ${sum.countedElsewhereCount} counted elsewhere` : ""}`} />
+      <div className="strip rise grid-cols-2 lg:grid-cols-4" style={{ "--i": 1 } as React.CSSProperties} aria-label="Summary">
+        <Metric label={kind === "invoice" ? "Still owed to you" : "Still to pay"} value={money(sum.outstandingMinor, cur)} sub={`${sum.openCount} unpaid${sum.partlyPaidCount ? `, ${sum.partlyPaidCount} part paid` : ""}`} />
+        <Metric label="Overdue" value={money(sum.overdueMinor, cur)} tone={sum.overdueCount > 0 ? "danger" : undefined} sub={`${sum.overdueCount} ${kind === "invoice" ? "invoice" : "bill"}${sum.overdueCount === 1 ? "" : "s"}${overduePct > 0 ? ` · ${overduePct}% of total` : ""}`} />
+        <Metric label="Due in 7 days" value={money(sum.dueIn7Minor, cur)} sub={`${money(sum.dueIn30Minor, cur)} in 30 days`} />
+        <Metric label="In the forecast" value={money(sum.inForecastMinor, cur)} sub={`next ${data.horizonWeeks} weeks`} />
       </div>
 
       {bankMatches.length > 0 && isOwner && <BankMatches matches={bankMatches} biz={biz!} cur={cur} onDone={load} />}
       {adding && isOwner && <AddForm kind={kind} biz={biz!} cps={data.counterparties.filter((c: any) => c.role === who)} cur={cur} onDone={() => { setAdding(false); void load(); }} />}
 
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
-        {FILTERS.map(([k, label]) => <button key={k} aria-pressed={filter === k} onClick={() => setFilter(k)} className={`rounded-full border px-3 py-1 text-sm ${filter === k ? "border-accent bg-accent-soft text-accent" : "border-line-strong text-ink-soft"}`}>{label}</button>)}
+      <div className="rise flex flex-wrap items-center justify-between gap-3" style={{ "--i": 2 } as React.CSSProperties}>
+        <Tabs label="Invoices or bills" value={kind} onChange={(k) => { setKind(k); setAdding(false); }} tabs={[{ id: "invoice", label: "Invoices" }, { id: "bill", label: "Bills" }]} />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="seg" role="group" aria-label="Show">
+            {FILTERS.map(([k, label]) => <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)} className="seg-item">{label}</button>)}
+          </div>
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} aria-label={`Search ${kind === "invoice" ? "invoices" : "bills"}`} placeholder="Search" className={`${inputClass} !w-52`} />
+        </div>
       </div>
 
       {rows.length === 0 ? (
-        <Empty title={`No ${kind === "invoice" ? "invoices" : "bills"} here`}>{filter === "open" ? `Nothing unpaid. ${isOwner ? `Add ${kind === "invoice" ? "an invoice" : "a bill"} and the forecast picks it up.` : ""}` : "Nothing matches this view."}</Empty>
+        <Empty title={`No ${kind === "invoice" ? "invoices" : "bills"} here`}>{filter === "open" ? "Nothing unpaid." : "Nothing matches this view."}</Empty>
       ) : (
-        <Card className="!p-0 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[46rem] text-sm">
-              <caption className="sr-only">{kind === "invoice" ? "Invoices" : "Bills"}</caption>
-              <thead><tr><Th>{kind === "invoice" ? "Invoice" : "Bill"}</Th><Th>{kind === "invoice" ? "Customer" : "Supplier"}</Th><Th>Due</Th><Th right>Amount</Th><Th right>Paid</Th><Th right>Still owed</Th><Th>Status</Th><Th>In forecast</Th></tr></thead>
-              <tbody>
-                {rows.map((d) => <Row key={d.id} d={d} biz={biz!} cur={cur} owner={!!isOwner} open={focus === d.id} onToggle={() => setFocus(focus === d.id ? null : d.id)} onChange={load} cps={data.counterparties.filter((c: any) => c.role === who)} />)}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <Table caption={kind === "invoice" ? "Invoices" : "Bills"} head={<><Th>{kind === "invoice" ? "Invoice" : "Bill"}</Th><Th>{kind === "invoice" ? "Customer" : "Supplier"}</Th><Th>Due</Th><Th right>Amount</Th><Th right>Paid</Th><Th right>Still owed</Th><Th>Status</Th><Th>In forecast</Th></>}>
+          {rows.map((d) => <Row key={d.id} d={d} biz={biz!} cur={cur} owner={!!isOwner} open={focus === d.id} onToggle={() => setFocus(focus === d.id ? null : d.id)} onChange={load} cps={data.counterparties.filter((c: any) => c.role === who)} />)}
+        </Table>
       )}
     </div>
   );
@@ -114,9 +102,9 @@ function StateChip({ d }: { d: any }) {
 function Row({ d, biz, cur, owner, open, onToggle, onChange, cps }: { d: any; biz: string; cur: string; owner: boolean; open: boolean; onToggle: () => void; onChange: () => void; cps: any[] }) {
   return (
     <>
-      <tr id={`doc-${d.id}`} className={`border-t border-line align-top ${open ? "bg-accent-soft/40" : ""}`}>
-        <th scope="row" className="py-2 pl-4 pr-3 text-left font-medium"><button className="text-left text-accent underline" aria-expanded={open} onClick={onToggle}>{d.number}</button></th>
-        <td className="py-2 pr-3">{d.counterpartyName}</td>
+      <tr id={`doc-${d.id}`} className={`row-hover h-12 border-t border-line align-middle ${open ? "bg-accent-soft/40" : ""}`}>
+        <th scope="row" className="py-2 pl-4 pr-3 text-left font-medium"><button className="text-left font-medium text-accent hover:underline" aria-expanded={open} onClick={onToggle}>{d.number}</button></th>
+        <td className="py-3 pr-3">{d.counterpartyName}</td>
         <td className="py-2 pr-3 whitespace-nowrap">{date(d.dueOn)}</td>
         <td className="num py-2 pr-3 text-right">{money(d.amountMinor, cur)}</td>
         <td className="num py-2 pr-3 text-right">{BigInt(d.paidMinor) > 0n ? money(d.paidMinor, cur) : "–"}</td>
@@ -281,7 +269,7 @@ function AddForm({ kind, biz, cps, cur, onDone }: { kind: Kind; biz: string; cps
     if (r.status === 409 && r.data?.details?.overlaps) setOverlaps(r.data.details.overlaps); else setErr(r.data?.error ?? (r.data?.issues ? "Check the details you entered" : "Could not save"));
   }
   return (
-    <Card title={kind === "invoice" ? "Add an invoice" : "Add a bill"} subtitle="Type the amount as on the document, for example 1250.00. The forecast picks it up straight away, unless it is a draft.">
+    <Card title={kind === "invoice" ? "Add an invoice" : "Add a bill"} subtitle="Amount as on the document, for example 1250.00. The forecast picks it up straight away.">
       <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
         <div className="grid gap-3 md:grid-cols-3">
           <Field label={who === "customer" ? "Customer" : "Supplier"}><select className={inputClass} value={f.cp} onChange={(e) => setF({ ...f, cp: e.target.value })}><option value="">Choose…</option>{cps.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="__new">A new {who}…</option></select></Field>
@@ -290,7 +278,7 @@ function AddForm({ kind, biz, cps, cur, onDone }: { kind: Kind; biz: string; cps
           <Field label={`Amount (${cur})`}><input className={inputClass} inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="1250.00" required /></Field>
           <Field label="Issued on"><input type="date" className={inputClass} value={f.issuedOn} onChange={(e) => setF({ ...f, issuedOn: e.target.value })} required /></Field>
           <Field label="Due on"><input type="date" className={inputClass} value={f.dueOn} onChange={(e) => setF({ ...f, dueOn: e.target.value })} required /></Field>
-          {kind === "invoice" && <label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={f.draft} onChange={(e) => setF({ ...f, draft: e.target.checked })} /> Draft (not sent yet; kept out of the forecast)</label>}
+          {kind === "invoice" && <label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={f.draft} onChange={(e) => setF({ ...f, draft: e.target.checked })} /> Draft (kept out of the forecast)</label>}
         </div>
         {err && <div className="mt-3"><ErrorNote>{err}</ErrorNote></div>}
         {overlaps && <Overlaps overlaps={overlaps} cur={cur} onSame={(ref) => save({ countedIn: ref })} onSeparate={() => save({ acknowledgeOverlaps: true })} />}
@@ -308,7 +296,7 @@ function BankMatches({ matches, biz, cur, onDone }: { matches: any[]; biz: strin
     if (r.ok) onDone(); else setErr(r.data?.error ?? "Could not record the payment");
   }
   return (
-    <Card tone="caution" title="Bank transactions that look like payments" subtitle="These bank lines match an unpaid document exactly (same customer or supplier, same amount) and are not used yet. Confirm to record the payment against the bank line.">
+    <Card tone="caution" title="Bank transactions that look like payments" subtitle="Exact matches to unpaid documents, not used yet. Confirm to record the payment.">
       <ul className="divide-y divide-line text-sm">
         {matches.map((m) => (
           <li key={`${m.docId}-${m.transactionId}`} className="flex flex-wrap items-center justify-between gap-2 py-2">

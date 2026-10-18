@@ -36,6 +36,7 @@
     "check:handoff": "bun --env-file=.env scripts/handoff-sanity.ts",
     "check:matching": "bun --env-file=.env scripts/matching-sanity.ts",
     "monitor": "bun --env-file=.env scripts/monitor.ts",
+    "check:automations": "bun --env-file=.env scripts/automations-sanity.ts",
     "check:monitor": "bun --env-file=.env scripts/monitor-sanity.ts",
     "check:analysis": "bun --env-file=.env scripts/analysis-sanity.ts",
     "check:attacks": "bun --env-file=.env scripts/attack-sanity.ts",

@@ -1,18 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Chart } from "@/ui/Chart";
-import { Btn, Card, Chip, Disclosure, Empty, ErrorNote, Loading, Stat, Th } from "@/ui/kit";
+import { Btn, Chip, Disclosure, Empty, ErrorNote, Loading, Metric, PageHead, Th, type Tone } from "@/ui/kit";
+import { Icon } from "@/ui/icons";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
-import { CashHeadline, CauseDocuments, ForecastBasis, GapCauses, LedgerGlance, weekWithDates } from "@/ui/rescue";
+import { CauseDocuments, ForecastBasis, GapCauses, pictureOf } from "@/ui/rescue";
 import { NextStep } from "@/ui/NextStep";
-import { Copilot } from "@/ui/Copilot";
 import { FinancialHealth } from "@/ui/insights";
 import { AlertsPanel } from "@/ui/alerts";
-import { BusinessAnalysis } from "@/ui/analysis";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+const LIFECYCLE: Record<string, string> = { running: "Working", needs_replan: "Needs a new plan", exhausted: "No plan fits", superseded: "Replaced" };
+const stagger = (i: number) => ({ "--i": i }) as React.CSSProperties;
+
 export default function CashDesk() {
   const { session } = useSession();
   const biz = session?.business.id;
@@ -55,104 +58,135 @@ export default function CashDesk() {
   const latest = roots.filter((c) => c.lifecycle !== "superseded").at(-1) ?? roots.at(-1);
   const running = cases.find((c) => c.status === "running");
   const neg = f.firstNegativeWeek;
+  const { sh, reason, below0, tone } = pictureOf(room);
+  const g = room.ledger;
+  const lowTone: Tone = BigInt(f.minBalanceMinor) < 0n ? "danger" : BigInt(f.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good";
+  const status = running ? { label: "Investigating", tone: "accent" as Tone } : sh.shortage ? { label: below0 ? "Urgent" : "Watch", tone: tone as Tone } : { label: "On track", tone: "good" as Tone };
+  const headline = running ? "Your assistant is working on it" : sh.shortage ? (below0 ? `Cash goes below zero in ${week(reason.firstNegativeWeek ?? reason.minBalanceWeek)}` : `Cash dips under your cushion in ${week(reason.minBalanceWeek)}`) : `Cash stays above your cushion for ${room.horizonWeeks} weeks`;
+  const detail = sh.shortage ? `${money(reason.shortfallMinor, cur)} short of your cushion at the lowest point.` : `Lowest point is ${money(f.minBalanceMinor, cur)} in ${week(f.minBalanceWeek)}.`;
+  const overduePct = g && BigInt(g.openInvoiceMinor) > 0n ? Number((BigInt(g.overdueMinor) * 1000n) / BigInt(g.openInvoiceMinor)) / 10 : 0;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="display text-3xl">Today</h1>
-          <p className="text-ink-soft">{date(room.asOf)}. Where your cash is heading over the next 20 weeks, including the orders and quotes you have confirmed.</p>
-        </div>
-        <Btn variant="secondary" busy={busy} onClick={check}>Re-check my cash</Btn>
-      </div>
-      {error && <ErrorNote>{error}</ErrorNote>}
+    <div className="grid items-start gap-x-6 gap-y-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+      {/* ===== MAIN: the cash story ===== */}
+      <div className="min-w-0 space-y-6">
+        <PageHead title="Today" sub={`${date(room.asOf)} · ${session?.business.name.replace(" (SYNTHETIC)", "")}`}
+          actions={<Btn variant="secondary" busy={busy} onClick={check}><Icon name="refresh" size={16} />Re-check my cash</Btn>} />
+        {error && <ErrorNote>{error}</ErrorNote>}
 
-      {/* 1. The cash picture: where you stand, and where it is heading */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Stat label="In the bank today" value={money(room.balances.sandboxBankMinor, cur)} sub="practice bank, no real money" />
-        <Stat label="Your safety cushion" value={money(room.reserveMinor, cur)} sub="you never want to dip below this" />
-        <Stat label="Lowest point ahead" value={money(f.minBalanceMinor, cur)} sub={weekWithDates(f.weeks, f.minBalanceWeek)} tone={BigInt(f.minBalanceMinor) < 0n ? "danger" : BigInt(f.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
-      </div>
-
-      {running && <Card tone="accent" title={<span className="flex items-center gap-2">Your assistant is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft" role="status">It is reading your books and searching for plans. Open Plans to watch it work.</p></Card>}
-
-      <CashHeadline room={room} cur={cur} latestRunId={latest?.runId ?? null} busy={busy} onAsk={check} />
-
-      <Card title="Your cash, week by week" subtitle={room.agreed ? "With the terms you have agreed (solid), against doing nothing (orange dashed) and without the new orders (grey dashed)." : room.commitments.length ? "With your confirmed orders and quotes (solid) and without them (dashed)." : "Your books only. No orders or quotes have been confirmed yet."}>
-        <Chart currency={cur} reserveMinor={room.reserveMinor} series={[
-          ...(room.commitments.length ? [{ key: "books", label: "Without the new orders and quotes", weeks: room.booksOnly.weeks, color: "#8b958f", dashed: true }] : []),
-          ...(room.agreed ? [{ key: "nothing", label: "If you had done nothing", weeks: doNothing.weeks, color: "#b45309", dashed: true, firstNegativeWeek: doNothing.firstNegativeWeek }] : []),
-          ...(room.downside ? [{ key: "late", label: `If customers pay ${room.downside.days} days late`, weeks: room.downside.weeks, color: "#7c3aed", dashed: true, firstNegativeWeek: room.downside.firstNegativeWeek }] : []),
-          { key: "with", label: room.agreed ? "With your agreed plan" : room.commitments.length ? "With confirmed orders and quotes" : "Your books", weeks: f.weeks, color: "#0d5a50", firstNegativeWeek: neg },
-        ]} />
-      </Card>
-
-      {/* 2. What needs attention now */}
-      <AlertsPanel />
-
-      {/* 3. Ask */}
-      {biz && (
-        <Card title="Ask Copilot">
-          <Copilot />
-        </Card>
-      )}
-
-      {/* 4. The next step, only when it adds something beyond the alerts */}
-      <NextStep />
-
-      {room.commitments.length === 0 && cases.length === 0 && (
-        <Card title="How Ledgerhand works" subtitle="Four steps. You stay in charge of every one that matters.">
-          <ol className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              ["1. You add an order or quote", "Paste a customer order or a supplier quote. It is read, and you confirm what it says."],
-              ["2. It spots trouble early", "Your cash is projected 20 weeks ahead. If you would run short, it tells you when and why."],
-              ["3. It suggests fixes, you choose", "It asks suppliers, customers or lenders for better terms, only inside limits you set."],
-              ["4. It acts, then proves it", "Everything is checked separately and written to a record nobody can quietly change."],
-            ].map(([t, d]) => <li key={t} className="rounded-xl border border-line bg-paper p-3"><p className="font-medium">{t}</p><p className="mt-1 text-ink-soft">{d}</p></li>)}
-          </ol>
-        </Card>
-      )}
-
-      {/* 5. Details: everything behind the picture, one line each until opened */}
-      <section aria-labelledby="today-details" className="space-y-3">
-        <h2 id="today-details" className="display text-lg text-ink-soft">Details</h2>
-        {biz && <FinancialHealth biz={biz} cur={cur} busy={busy} latestRunId={latest?.runId ?? null} onPlanSearch={check} />}
-        <BusinessAnalysis />
-        <GapCauses room={room} cur={cur} />
-        <ForecastBasis room={room} cur={cur} />
-        <CauseDocuments room={room} cur={cur} />
-        <LedgerGlance room={room} cur={cur} />
-        <Disclosure title="Orders and quotes you have confirmed" takeaway={room.commitments.length === 0 ? "Nothing to plan around yet" : `${room.commitments.length} counted in the forecast`} subtitle="Each one is already counted in the forecast above."
-        right={<Btn variant="secondary" href="/room/commitments">Add an order or quote</Btn>}>
-        {room.commitments.length === 0 ? (
-          <Empty title="Nothing to plan around yet" action={<Btn href="/room/commitments">Upload a purchase order or quote</Btn>}>Your assistant starts when a new order or quote is confirmed, or when the forecast shows a shortage.</Empty>
-        ) : (
-          <div className="overflow-x-auto"><table className="w-full text-sm">
-            <thead><tr><Th>Date</Th><Th>What</Th><Th right>Amount</Th><Th>Confidence</Th></tr></thead>
-            <tbody>
-              {room.commitments.map((c: any) => (
-                <tr key={c.ref} className="border-t border-line"><td className="py-2 pr-3 whitespace-nowrap">{date(c.date)}</td><td className="pr-3">{c.label}</td>
-                  <td className={`num pr-3 text-right ${BigInt(c.amountMinor) < 0n ? "text-danger" : "text-good"}`}>{money(c.amountMinor, cur, { signed: true })}</td><td className="text-ink-soft">{c.confidence}</td></tr>
-              ))}
-            </tbody>
-          </table></div>
-        )}
-      </Disclosure>
-        <Disclosure title="What if customers pay late?" takeaway={room.downside ? `If customers pay ${room.downside.days} days late, your lowest point is ${money(room.downside.minBalanceMinor, cur)}` : "See how much a late payer would hurt"} subtitle="Customers often pay later than their terms. See how much that would hurt."
-        right={<label className="flex items-center gap-2 text-sm"><span className="text-ink-soft">Customers pay</span>
-          <select aria-label="How late customers pay" className="rounded-lg border border-line-strong bg-white px-2 py-1.5 text-sm" value={late} onChange={(e) => setLate(Number(e.target.value))}>
-            <option value={0}>on time</option>{[7, 14, 21, 30].map((d) => <option key={d} value={d}>{d} days late</option>)}
-          </select></label>}>
-        {!room.downside ? <p className="text-sm text-ink-soft">Pick a delay to add a line to the chart above and see your lowest point.</p> : (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Lowest point" value={money(room.downside.minBalanceMinor, cur)} sub={`${week(room.downside.minBalanceWeek)} · ${money((BigInt(room.downside.minBalanceMinor) - BigInt(f.minBalanceMinor)).toString(), cur, { signed: true })} against on time`} tone={BigInt(room.downside.minBalanceMinor) < 0n ? "danger" : BigInt(room.downside.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
-            <Stat label="First below zero" value={week(room.downside.firstNegativeWeek)} tone={room.downside.firstNegativeWeek ? "danger" : "good"} />
-            <Stat label="Weeks below zero" value={room.downside.weeksBelowZero} tone={room.downside.weeksBelowZero ? "danger" : "good"} />
-            <Stat label="Closing balance" value={money(room.downside.closingMinor, cur)} />
+        <section className="surface rise" style={stagger(1)} aria-label="Cash outlook">
+          <div className="flex flex-wrap items-center justify-between gap-4 p-6 pb-5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <Chip tone={status.tone} pulse={!!running}>{status.label}</Chip>
+                <h2 className="display text-[22px] leading-snug" role="status">{headline}</h2>
+              </div>
+              <p className="mt-1 text-[15px] text-ink-soft"><span className="num">{detail}</span></p>
+            </div>
+            {sh.shortage && (latest?.runId
+              ? <Btn href={`/room/case?run=${latest.runId}`}>See my options<Icon name="arrow" size={16} /></Btn>
+              : <Btn onClick={check} busy={busy}>Find me options<Icon name="arrow" size={16} /></Btn>)}
           </div>
-        )}
-      </Disclosure>
-      </section>
+          <div className="strip grid-cols-3 !rounded-none !border-x-0 !shadow-none">
+            <Metric label="In the bank today" value={money(room.balances.sandboxBankMinor, cur)} />
+            <Metric label="Lowest point ahead" value={money(f.minBalanceMinor, cur)} tone={lowTone} sub={week(f.minBalanceWeek)} />
+            <Metric label="Safety cushion" value={money(room.reserveMinor, cur)} />
+          </div>
+          <div className="p-6 pt-5">
+            <Chart flows currency={cur} reserveMinor={room.reserveMinor} height={270} series={[
+              ...(room.commitments.length ? [{ key: "books", label: "Without the new orders and quotes", weeks: room.booksOnly.weeks, color: "#8b958f", dashed: true }] : []),
+              ...(room.agreed ? [{ key: "nothing", label: "If you had done nothing", weeks: doNothing.weeks, color: "#c2701a", dashed: true, firstNegativeWeek: doNothing.firstNegativeWeek }] : []),
+              ...(room.downside ? [{ key: "late", label: `If customers pay ${room.downside.days} days late`, weeks: room.downside.weeks, color: "#7c5cd6", dashed: true, firstNegativeWeek: room.downside.firstNegativeWeek }] : []),
+              { key: "with", label: room.agreed ? "With your agreed plan" : room.commitments.length ? "With confirmed orders and quotes" : "Your books", weeks: f.weeks, color: "#1d5a4c", firstNegativeWeek: neg },
+            ]} />
+          </div>
+        </section>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="surface rise p-5" style={stagger(2)} aria-label="Invoices and bills">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="display text-[16px]">Invoices &amp; bills</h2>
+              <Link href="/room/invoices" className="press -mr-2 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-accent hover:bg-accent-soft">Open<Icon name="arrow" size={14} /></Link>
+            </div>
+            {!g || (g.openInvoiceCount === 0 && g.billsDueSoonCount === 0) ? (
+              <p className="mt-4 flex items-center gap-2 text-sm text-ink-soft"><Icon name="check" size={15} className="text-good" />All clear for the next two weeks</p>
+            ) : (
+              <>
+                <p className="mt-3 flex items-baseline gap-2"><span className="display num text-[26px] leading-none">{money(g.openInvoiceMinor, cur)}</span><span className="text-sm text-ink-soft">owed to you</span></p>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-accent-soft" role="img" aria-label={`${overduePct}% overdue`}>
+                  <div className="h-full bg-danger" style={{ width: `${overduePct}%`, transition: "width var(--dur-slow) var(--ease-out)" }} />
+                </div>
+                <dl className="mt-3 flex justify-between gap-4 text-sm">
+                  <div><dt className="text-ink-soft">Overdue</dt><dd className="num font-medium text-danger">{money(g.overdueMinor, cur)} <span className="font-normal text-ink-soft">· {g.overdueCount}</span></dd></div>
+                  <div className="text-right"><dt className="text-ink-soft">Bills due in 2 weeks</dt><dd className="num font-medium">{money(g.billsDueSoonMinor, cur)}</dd></div>
+                </dl>
+              </>
+            )}
+          </section>
+
+          <section className="surface rise p-5" style={stagger(3)} aria-label="If customers pay late">
+            <h2 className="display text-[16px]">If customers pay late</h2>
+            <div role="group" aria-label="How late customers pay" className="seg mt-3">
+              {[0, 7, 14, 21, 30].map((d) => <button key={d} type="button" aria-pressed={late === d} className="seg-item" onClick={() => setLate(d)}>{d === 0 ? "On time" : `${d}d`}</button>)}
+            </div>
+            {!room.downside ? (
+              <p className="mt-4 text-sm text-ink-soft">Pick a delay to see it on the chart</p>
+            ) : (
+              <div className="mt-4">
+                <p className="flex items-baseline gap-2"><span className={`display num text-[26px] leading-none ${BigInt(room.downside.minBalanceMinor) < 0n ? "text-danger" : BigInt(room.downside.minBalanceMinor) < BigInt(room.reserveMinor) ? "text-caution" : "text-good"}`}>{money(room.downside.minBalanceMinor, cur)}</span><span className="text-sm text-ink-soft">lowest point</span></p>
+                <p className="mt-1.5 text-sm text-ink-soft"><span className="num">{money((BigInt(room.downside.minBalanceMinor) - BigInt(f.minBalanceMinor)).toString(), cur, { signed: true })}</span> against on time · {room.downside.firstNegativeWeek ? <span className="text-danger">below zero from {week(room.downside.firstNegativeWeek)}</span> : "never below zero"}</p>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <section className="rise" style={stagger(4)} aria-labelledby="today-details">
+          <h2 id="today-details" className="display mb-2 text-[16px]">Details</h2>
+          <div className="flat-list">
+            {biz && <FinancialHealth biz={biz} cur={cur} busy={busy} latestRunId={latest?.runId ?? null} onPlanSearch={check} />}
+            <Link href="/room/analysis" className="row-hover flex items-center justify-between gap-3 border-t border-line px-5 py-3.5"><span><span className="display block text-[15px]">Business analysis</span><span className="block text-sm text-ink-soft">Customers, overdue and runway</span></span><Icon name="arrow" size={16} className="text-ink-soft" /></Link>
+            <GapCauses room={room} cur={cur} />
+            <ForecastBasis room={room} cur={cur} />
+            <CauseDocuments room={room} cur={cur} />
+            {roots.length > 0 && (
+              <Disclosure title="Recent plans" takeaway={`${roots.length} so far`}>
+                <ul className="-my-1 divide-y divide-line">
+                  {roots.slice(-5).reverse().map((c: any) => (
+                    <li key={c.runId}>
+                      <Link href={`/room/case?run=${c.runId}`} className="row-hover -mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 text-sm">
+                        <span><span className="block font-medium">{date(c.startedAt)}</span><span className="block text-xs text-ink-soft">{LIFECYCLE[c.lifecycle] ?? String(c.lifecycle).replace(/_/g, " ")}</span></span>
+                        <Icon name="arrow" size={14} className="text-ink-soft" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </Disclosure>
+            )}
+            <Disclosure title="Orders and quotes you have confirmed" takeaway={room.commitments.length === 0 ? "None yet" : `${room.commitments.length} counted in the forecast`}
+              right={<Btn variant="secondary" href="/room/commitments">Add an order or quote</Btn>}>
+              {room.commitments.length === 0 ? (
+                <Empty title="Nothing to plan around yet" action={<Btn href="/room/commitments">Upload a purchase order or quote</Btn>}>Add an order or quote to start.</Empty>
+              ) : (
+                <div className="overflow-x-auto"><table className="w-full text-sm">
+                  <thead><tr><Th>Date</Th><Th>What</Th><Th right>Amount</Th><Th>Confidence</Th></tr></thead>
+                  <tbody>
+                    {room.commitments.map((c: any) => (
+                      <tr key={c.ref} className="row-hover border-t border-line"><td className="whitespace-nowrap py-2 pr-3">{date(c.date)}</td><td className="pr-3">{c.label}</td>
+                        <td className={`num pr-3 text-right ${BigInt(c.amountMinor) < 0n ? "text-danger" : "text-good"}`}>{money(c.amountMinor, cur, { signed: true })}</td><td className="text-ink-soft">{c.confidence}</td></tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+            </Disclosure>
+          </div>
+        </section>
+      </div>
+
+      {/* ===== RAIL: what needs you ===== */}
+      <aside className="rise min-w-0 space-y-6" style={stagger(2)} aria-label="Attention">
+        <NextStep />
+        <AlertsPanel />
+      </aside>
     </div>
   );
 }

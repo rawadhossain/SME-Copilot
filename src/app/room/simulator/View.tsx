@@ -5,7 +5,8 @@
 // using the normal shortage check and Review and sign.
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Btn, Card, Chip, ErrorNote, Field, Loading, Stat, Th, inputClass, type Tone } from "@/ui/kit";
+import { Btn, Card, Chip, Disclosure, ErrorNote, Field, Loading, Metric, PageHead, Th, inputClass, type Tone } from "@/ui/kit";
+import { Icon } from "@/ui/icons";
 import { Chart, type Series } from "@/ui/Chart";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
@@ -47,6 +48,7 @@ export default function View() {
   const [res, setRes] = useState<{ report: any; comparison: any } | null>(null);
   const [last, setLast] = useState<{ name: string; shocks: any[] } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(true); // the scenario picker folds away once a result is showing
   const [error, setError] = useState<string | null>(null);
   const [hand, setHand] = useState<{ id: string; busy: boolean; review?: any; refused?: { reasons: string[]; fallback: string }; ack: boolean; error?: string; done?: { caseUrl: string; unchanged: boolean } } | null>(null);
 
@@ -119,7 +121,7 @@ export default function View() {
     const r = await call(`/api/business/${biz}/simulate`, body);
     setBusy(false);
     if (!r.ok) { setError(r.data?.error ?? "The simulation failed"); return; }
-    setRes(r.data); setLast(scenario);
+    setRes(r.data); setLast(scenario); setEditing(false);
   }
 
   const isOwner = session?.user.role === "owner";
@@ -145,22 +147,35 @@ export default function View() {
   const ev2 = report?.evaluation;
   const rec = ev2?.candidates.find((c: any) => c.id === ev2.recommendedId) ?? null;
   const series: Series[] = report ? [
-    { key: "live", label: "Today's books (actual)", color: "#2f6f5e", weeks: report.live.weeklyClosing.map((c: string, i: number) => ({ index: i + 1, start: report.live.weekStarts[i], closing: c })) },
-    { key: "sim", label: "Scenario, no action (hypothetical)", color: "#be123c", weeks: report.simulated.weeklyClosing.map((c: string, i: number) => ({ index: i + 1, start: report.simulated.weekStarts[i], closing: c })), firstNegativeWeek: report.simulated.firstNegativeWeek, dashed: true },
-    ...(rec ? [{ key: "rec", label: "Recommended response (hypothetical)", color: "#6d28d9", weeks: rec.weeklyClosing.map((c: string, i: number) => ({ index: i + 1, start: report.simulated.weekStarts[i], closing: c })) }] : []),
+    { key: "live", label: "Today's books (actual)", color: "#174d38", weeks: report.live.weeklyClosing.map((c: string, i: number) => ({ index: i + 1, start: report.live.weekStarts[i], closing: c })) },
+    { key: "sim", label: "Scenario, no action (hypothetical)", color: "#c0392b", weeks: report.simulated.weeklyClosing.map((c: string, i: number) => ({ index: i + 1, start: report.simulated.weekStarts[i], closing: c })), firstNegativeWeek: report.simulated.firstNegativeWeek, dashed: true },
+    ...(rec ? [{ key: "rec", label: "Recommended response (hypothetical)", color: "#5a9e2f", weeks: rec.weeklyClosing.map((c: string, i: number) => ({ index: i + 1, start: report.simulated.weekStarts[i], closing: c })) }] : []),
   ] : [];
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="display text-3xl">Simulator</h1>
-        <p className="text-sm text-ink-soft">Try a crisis on a copy of your books before it happens. Nothing here is real: no payment, agreement or approval is created, and your books are not changed.</p>
-      </header>
+      <PageHead title="Simulator" sub="Nothing here is real and your books do not change" back={{ href: "/room", label: "Today" }} info="Try a crisis on a copy of your books before it happens. Results are hypothetical and not verified." />
 
-      <Card title="1. Choose what could go wrong" subtitle="Pick a starting point, then change any assumption and run it again.">
-        <div className="flex flex-wrap gap-2">
-          {PRESETS.map((p) => <Btn key={p.label} variant="secondary" onClick={() => { setEvents(p.events); setName(p.name); }}>{p.label}</Btn>)}
-          <Btn variant="ghost" onClick={() => setEvents((xs) => [...xs, ev({ cp: major })])}>+ Add an event</Btn>
+      {report && !editing && (
+        <div className="surface rise flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+          <p className="text-sm"><span className="text-ink-soft">Scenario</span> <b className="ml-1">{last?.name ?? name}</b></p>
+          <Btn variant="secondary" onClick={() => setEditing(true)}>Change scenario</Btn>
+        </div>
+      )}
+      <section hidden={!!report && !editing} className="surface rise p-6" style={{ "--i": 1 } as React.CSSProperties} aria-label="Choose what could go wrong">
+        <h2 className="display text-[17px]">What could go wrong?</h2>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {PRESETS.map((p) => {
+            const on = name === p.name && events.length > 0;
+            return (
+              <button key={p.label} type="button" aria-pressed={on} onClick={() => { setEvents(p.events); setName(p.name); }}
+                className={`press lift flex items-start gap-3 rounded-xl border p-4 text-left ${on ? "border-accent bg-accent-soft/60" : "border-line bg-panel"}`}>
+                <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${on ? "bg-accent text-white" : "bg-neutral-soft text-ink-soft"}`}><Icon name={p.events.length > 1 ? "plans" : p.events[0].kind === "customer_late" ? "clock" : p.events[0].kind === "customer_short" ? "down" : p.events[0].kind === "supplier_refuses" ? "link" : "bill"} size={16} /></span>
+                <span className="min-w-0"><span className="block text-sm font-medium">{p.label}</span><span className="block text-xs text-ink-soft">{p.events.map((e) => KINDS.find(([k]) => k === e.kind)?.[1] ?? "").join(" + ")}</span></span>
+              </button>
+            );
+          })}
+          <button type="button" onClick={() => setEvents((xs) => [...xs, ev({ cp: major })])} className="press flex items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong p-4 text-sm font-medium text-accent hover:bg-accent-soft/50"><Icon name="plus" size={16} />Build your own event</button>
         </div>
         {events.length > 0 && (
           <div className="mt-4 space-y-3">
@@ -185,101 +200,134 @@ export default function View() {
         )}
         {note && <p className="mt-3 text-sm" role="status">{note}</p>}
         {error && <div className="mt-3" aria-live="polite"><ErrorNote>{error}</ErrorNote></div>}
-      </Card>
+      </section>
 
-      {report && (
-        <>
-          <div role="note" className="rounded-xl border-2 border-dashed border-caution/60 bg-caution-soft p-3 text-sm text-caution">
-            <p className="font-semibold">HYPOTHETICAL RESULT · {report.scenario.name} · not verified</p>
-            <ul className="mt-1 list-disc pl-5">{report.notices.map((n: string) => <li key={n}>{n}</li>)}</ul>
-          </div>
-
-          {res?.comparison && (
-            <Card title={`What changed from "${res.comparison.previousName}"`} subtitle="The whole forecast and every strategy were recomputed from scratch with the new assumption." tone={res.comparison.changed ? "accent" : undefined}>
-              <ul className="list-disc space-y-1 pl-5 text-sm">{res.comparison.lines.map((l: string) => <li key={l}>{l}</li>)}</ul>
-            </Card>
-          )}
-
-          <div className="grid gap-3 md:grid-cols-4">
-            <Stat label="Lowest balance today (actual)" value={money(report.live.minBalanceMinor, cur)} sub={`${week(report.live.minBalanceWeek)}`} tone={report.live.belowReserve ? "caution" : "good"} />
-            <Stat label="Lowest in this scenario" value={money(report.simulated.minBalanceMinor, cur)} sub={`${week(report.simulated.minBalanceWeek)}, week of ${date(report.simulated.minBalanceWeekStart)}`} tone={report.simulated.belowZero ? "danger" : report.simulated.belowReserve ? "caution" : "good"} />
-            <Stat label="Shortfall against your cushion" value={money(report.simulated.gapMinor, cur)} sub={`cushion ${money(report.reserveMinor, cur)}`} tone={report.simulated.gapMinor === "0" ? "good" : "danger"} />
-            <Stat label="Cushion first breached" value={report.simulated.firstBelowReserveWeek ? week(report.simulated.firstBelowReserveWeek) : "never"} sub={report.simulated.firstNegativeWeek ? `cash runs out in ${week(report.simulated.firstNegativeWeek)}` : "cash stays above zero"} tone={report.simulated.firstBelowReserveWeek ? "danger" : "good"} />
-          </div>
-
-          <Card title="What happens, and why" subtitle="Figures are computed by the same forecast engine as your real forecast.">
-            <ul className="list-disc space-y-1 pl-5 text-sm">{report.causes.lines.map((l: string) => <li key={l}>{l}</li>)}</ul>
-            <details className="mt-3 text-sm"><summary className="cursor-pointer text-accent">What moved in the forecast</summary>
-              <ul className="mt-2 space-y-1">{report.causes.changedItems.map((c: any, i: number) => <li key={`${i}-${c.label}`}>{c.label}: {c.before ? `${money(c.before.amountMinor, cur)} on ${date(c.before.date)}` : "not expected"} → {c.after ? `${money(c.after.amountMinor, cur)} on ${date(c.after.date)}` : "gone"}</li>)}</ul>
-              <p className="mt-2 text-xs text-ink-soft">Assumed: {report.scenario.assumptions.join(" ")}</p>
-            </details>
-            <div className="mt-4"><Chart series={series} reserveMinor={report.reserveMinor} currency={cur} /></div>
-          </Card>
-
-          <Card title="Strategies compared in this scenario" subtitle="Each one was recomputed with its own timing, fees, repayments, your signed limits and the permission gate. Counterparty acceptance is not guaranteed for any of them.">
-            {ev2.candidates.length === 0 ? <p className="text-sm">{ev2.whyPreferred.join(" ")}</p> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead><tr><Th>Strategy</Th><Th>Result</Th><Th right>Lowest balance</Th><Th right>Still short</Th><Th right>Cost</Th><Th right>Borrowed / repaid</Th><Th right>Parties</Th><Th>If customers slip 14 more days</Th></tr></thead>
-                  <tbody>
-                    <tr className="border-t border-line align-top"><td className="py-2 pr-3 font-medium">Do nothing</td><td><Chip tone={ev2.nothing.outcome === "resolves" ? "good" : "danger"}>{ev2.nothing.outcome === "resolves" ? "No shortage" : "Shortage"}</Chip></td><td className="num px-2 text-right">{money(ev2.nothing.minBalanceMinor, cur)}</td><td className="num px-2 text-right">{money(ev2.nothing.stillShortMinor, cur)}</td><td className="num px-2 text-right">–</td><td className="px-2 text-right">–</td><td className="px-2 text-right">0</td><td className="num px-2">{money(ev2.nothing.stressMinBalanceMinor, cur)}</td></tr>
-                    {ev2.candidates.map((c: any) => (
-                      <tr key={c.id} className={`border-t border-line align-top ${c.id === ev2.recommendedId ? "bg-accent-soft/40" : ""}`}>
-                        <td className="py-2 pr-3"><p className="font-medium">{c.title}{c.id === ev2.recommendedId && <span className="ml-2"><Chip tone="accent">Recommended</Chip></span>}</p>
-                          {isOwner && (c.outcome === "resolves" || c.outcome === "reduces") && <Btn variant="secondary" className="mt-1 !px-3 !py-1 text-xs" disabled={hand?.busy} onClick={() => review(c.id)}>Review this strategy in Plans</Btn>}
-                          <ul className="text-xs text-ink-soft">{c.leverText.map((t: string) => <li key={t}>{t}</li>)}</ul>
-                          <details className="text-xs"><summary className="cursor-pointer text-accent">Why this result · what could go wrong</summary>
-                            <ul className="mt-1 list-disc pl-4">{[...c.reasons, ...c.risks].map((t: string) => <li key={t}>{t}</li>)}</ul></details></td>
-                        <td className="px-2"><Chip tone={OUTCOME[c.outcome].tone}>{OUTCOME[c.outcome].label}</Chip></td>
-                        <td className="num px-2 text-right">{money(c.minBalanceMinor, cur)}</td><td className="num px-2 text-right">{money(c.stillShortMinor, cur)}</td><td className="num px-2 text-right">{money(c.costMinor, cur)}</td>
-                        <td className="num px-2 text-right">{c.borrows ? `${money(c.advanceMinor, cur)} / ${money(c.repaymentMinor, cur)}` : "–"}</td><td className="px-2 text-right">{c.counterparties}</td>
-                        <td className="num px-2">{money(c.stressMinBalanceMinor, cur)} <span className="text-xs text-ink-soft">{c.holdsUnderStress ? "holds" : "does not hold"}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+      {report && (() => {
+        const sim = report.simulated;
+        const tone: Tone = sim.belowZero ? "danger" : sim.belowReserve ? "caution" : "good";
+        const headline = sim.belowZero ? `Cash runs out in ${week(sim.firstNegativeWeek)}` : sim.belowReserve ? `Cash dips under your cushion in ${week(sim.firstBelowReserveWeek)}` : "No cash shortfall in this scenario";
+        const holds = (c: any) => (c.outcome === "resolves" ? "Keeps your cushion" : c.outcome === "reduces" ? "Reduces the gap" : OUTCOME[c.outcome].label);
+        return (
+          <>
+            {/* 1. The impact */}
+            <section className="surface rise" aria-label="Simulated result" role="note">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-6 pb-5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2.5"><Chip tone={tone}>{sim.belowZero ? "Shortfall" : sim.belowReserve ? "Below cushion" : "Holds"}</Chip><h2 className="display text-[22px] leading-snug">{headline}</h2></div>
+                  <p className="mt-1 text-[15px] text-ink-soft">{report.scenario.name} · <span className="font-medium text-caution">hypothetical, nothing has happened</span></p>
+                </div>
               </div>
-            )}
-          </Card>
+              <div className="strip grid-cols-3 !rounded-none !border-x-0 !shadow-none">
+                <Metric label="Lowest today (actual)" value={money(report.live.minBalanceMinor, cur)} sub={week(report.live.minBalanceWeek)} />
+                <Metric label="Lowest in this scenario" value={money(sim.minBalanceMinor, cur)} sub={week(sim.minBalanceWeek)} tone={tone} />
+                <Metric label="Short of your cushion" value={money(sim.gapMinor, cur)} sub={`cushion ${money(report.reserveMinor, cur)}`} tone={sim.gapMinor === "0" ? "good" : "danger"} />
+              </div>
+              <div className="p-6 pt-5"><Chart series={series} reserveMinor={report.reserveMinor} currency={cur} height={260} /></div>
+            </section>
 
-          {hand && (
-            <Card title="Review this strategy in Plans" subtitle="Nothing is signed, sent or scheduled by this step. It only adds an unsigned proposal to Plans, recalculated on your real books." tone="accent">
-              {hand.busy && !hand.review && !hand.refused && <Loading label="Rechecking against your real books" />}
-              {hand.error && <ErrorNote>{hand.error}</ErrorNote>}
-              {hand.refused && <div className="text-sm"><p className="font-medium">This strategy cannot be taken into Plans.</p><ul className="list-disc pl-5">{hand.refused.reasons.map((r) => <li key={r}>{r}</li>)}</ul><p className="mt-2">{hand.refused.fallback} <Link className="text-accent underline" href="/room/case">Open Plans</Link></p></div>}
-              {hand.review && (() => { const rv = hand.review; return (
-                <div className="space-y-3 text-sm">
-                  <p className="font-medium">{rv.strategy.leverText.join("; ")}</p>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-lg border border-line p-3"><p className="text-xs uppercase tracking-wide text-ink-soft">In the simulation (hypothetical)</p><p>Lowest balance {money(rv.simulated.nowStrategyLowestMinor, cur)}; cost {money(rv.simulated.nowCostMinor, cur)}</p></div>
-                    <div className="rounded-lg border border-line p-3"><p className="text-xs uppercase tracking-wide text-ink-soft">Recalculated on your real books today</p><p>With these terms: lowest balance {money(rv.realBooks.planLowestMinor, cur)} (week {rv.realBooks.planLowestWeek}); cost {money(rv.realBooks.costMinor, cur)}; {rv.realBooks.keepsCushion ? "keeps" : "does not keep"} your {money(rv.realBooks.reserveMinor, cur)} cushion. Doing nothing: {money(rv.realBooks.doNothingLowestMinor, cur)}.</p></div>
+            {/* 2. The recommended way out */}
+            {rec ? (
+              <section className="surface rise p-6" aria-label="Recommended response">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 max-w-2xl">
+                    <Chip tone="accent">Recommended</Chip>
+                    <h2 className="display mt-2 text-[19px] leading-snug">{rec.title}</h2>
+                    <p className="mt-1 text-sm text-ink-soft">{rec.leverText.join("; ")}</p>
                   </div>
-                  {rv.changes.length > 0 && <div><p className="font-medium">What changed since you ran the simulation</p><ul className="list-disc pl-5">{rv.changes.map((c: string) => <li key={c}>{c}</li>)}</ul></div>}
-                  {rv.realBooks.warnings.length > 0 && <ul className="list-disc pl-5 text-caution">{rv.realBooks.warnings.map((w: string) => <li key={w}>{w}</li>)}</ul>}
-                  <ul className="list-disc pl-5 text-ink-soft">{rv.notes.map((n: string) => <li key={n}>{n}</li>)}</ul>
-                  {rv.mustAcknowledge.length > 0 && !hand.done && <label className="flex items-start gap-2 rounded-lg bg-caution-soft p-3"><input type="checkbox" className="mt-1" checked={hand.ack} onChange={(e) => setHand({ ...hand, ack: e.target.checked })} /><span>{rv.mustAcknowledge.join(" ")} I have read this.</span></label>}
-                  {hand.done ? <p className="rounded-lg bg-good-soft p-3">{hand.done.unchanged ? "This plan was already in Plans. " : "Added to Plans as an unsigned proposal. "}Nothing has been signed, sent or run. <Link className="text-accent underline" href={hand.done.caseUrl}>Open it in Plans to review and sign</Link>.</p>
-                    : <div className="flex gap-2"><Btn busy={hand.busy} disabled={rv.mustAcknowledge.length > 0 && !hand.ack} onClick={addToPlans}>Add to Plans as an unsigned proposal</Btn><Btn variant="ghost" onClick={() => setHand(null)}>Cancel</Btn></div>}
-                </div>); })()}
-            </Card>
-          )}
-
-          <Card title={rec ? "Recommended response" : "Recommendation"} tone={rec ? "accent" : undefined}>
-            {rec && <p className="mb-2 text-sm font-medium">{rec.leverText.join("; ")}</p>}
-            <ul className="list-disc space-y-1 pl-5 text-sm">{ev2.whyPreferred.map((l: string) => <li key={l}>{l}</li>)}</ul>
-            {ev2.strategy && (
-              <div className="mt-4 grid gap-4 text-sm md:grid-cols-2">
-                <div><h3 className="font-medium">It relies on</h3><ul className="list-disc pl-5">{ev2.strategy.assumptions.map((l: string) => <li key={l}>{l}</li>)}</ul></div>
-                <div><h3 className="font-medium">What could still go wrong</h3><ul className="list-disc pl-5">{[...ev2.strategy.risks, ...(ev2.strategy.ifRefused ?? [])].map((l: string) => <li key={l}>{l}</li>)}</ul></div>
-                {((ev2.strategy.known?.length ?? 0) > 0 || (ev2.strategy.untested?.length ?? 0) > 0) && <div className="md:col-span-2"><h3 className="font-medium">What counterparties have said, and what is assumed</h3><ul className="list-disc pl-5">{[...(ev2.strategy.known ?? []), ...(ev2.strategy.untested ?? [])].map((l: string) => <li key={l}>{l}</li>)}</ul></div>}
-              </div>
+                  {isOwner && (rec.outcome === "resolves" || rec.outcome === "reduces") && <Btn disabled={hand?.busy} onClick={() => review(rec.id)}>Review in Plans<Icon name="arrow" size={16} /></Btn>}
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-4">
+                  <div><dt className="text-[13px] text-ink-soft">Result</dt><dd className="mt-0.5 text-sm font-medium"><Chip tone={OUTCOME[rec.outcome].tone}>{holds(rec)}</Chip></dd></div>
+                  <div><dt className="text-[13px] text-ink-soft">Lowest balance</dt><dd className="num mt-0.5 text-lg font-semibold">{money(rec.minBalanceMinor, cur)}</dd></div>
+                  <div><dt className="text-[13px] text-ink-soft">Cost</dt><dd className="num mt-0.5 text-lg font-semibold">{money(rec.costMinor, cur)}</dd></div>
+                  <div><dt className="text-[13px] text-ink-soft">If customers slip 14 more days</dt><dd className={`mt-0.5 text-sm font-medium ${rec.holdsUnderStress ? "text-good" : "text-caution"}`}>{rec.holdsUnderStress ? "Still holds" : `Does not hold (${money(rec.stressMinBalanceMinor, cur)})`}</dd></div>
+                </dl>
+              </section>
+            ) : (
+              <section className="surface rise p-6" aria-label="Recommendation"><h2 className="display text-[17px]">No recommendation needed</h2><p className="mt-1 text-sm text-ink-soft">{ev2.whyPreferred[0]}</p></section>
             )}
-            <p className="mt-4 rounded-lg bg-neutral-soft p-3 text-sm">This is a simulation. To act on a real shortage, open <Link className="text-accent underline" href="/room/case">Plans</Link>: the planner re-checks your real books, you review and sign, the permission gate and any second approver apply, and only then is anything sent to the sandbox and checked independently.</p>
-          </Card>
 
-          <Card title="What this simulation does not cover"><ul className="list-disc space-y-1 pl-5 text-sm">{report.limits.map((l: string) => <li key={l}>{l}</li>)}</ul></Card>
-        </>
-      )}
+            {hand && (
+              <Card title="Review this strategy in Plans" subtitle="Nothing is signed, sent or scheduled by this step. It only adds an unsigned proposal to Plans, recalculated on your real books." tone="accent">
+                {hand.busy && !hand.review && !hand.refused && <Loading label="Rechecking against your real books" />}
+                {hand.error && <ErrorNote>{hand.error}</ErrorNote>}
+                {hand.refused && <div className="text-sm"><p className="font-medium">This strategy cannot be taken into Plans.</p><ul className="list-disc pl-5">{hand.refused.reasons.map((r) => <li key={r}>{r}</li>)}</ul><p className="mt-2">{hand.refused.fallback} <Link className="text-accent underline" href="/room/case">Open Plans</Link></p></div>}
+                {hand.review && (() => { const rv = hand.review; return (
+                  <div className="space-y-3 text-sm">
+                    <p className="font-medium">{rv.strategy.leverText.join("; ")}</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-lg border border-line p-3"><p className="text-xs text-ink-soft">In the simulation (hypothetical)</p><p>Lowest balance {money(rv.simulated.nowStrategyLowestMinor, cur)}; cost {money(rv.simulated.nowCostMinor, cur)}</p></div>
+                      <div className="rounded-lg border border-line p-3"><p className="text-xs text-ink-soft">Recalculated on your real books today</p><p>With these terms: lowest balance {money(rv.realBooks.planLowestMinor, cur)} (week {rv.realBooks.planLowestWeek}); cost {money(rv.realBooks.costMinor, cur)}; {rv.realBooks.keepsCushion ? "keeps" : "does not keep"} your {money(rv.realBooks.reserveMinor, cur)} cushion. Doing nothing: {money(rv.realBooks.doNothingLowestMinor, cur)}.</p></div>
+                    </div>
+                    {rv.changes.length > 0 && <div><p className="font-medium">What changed since you ran the simulation</p><ul className="list-disc pl-5">{rv.changes.map((c: string) => <li key={c}>{c}</li>)}</ul></div>}
+                    {rv.realBooks.warnings.length > 0 && <ul className="list-disc pl-5 text-caution">{rv.realBooks.warnings.map((w: string) => <li key={w}>{w}</li>)}</ul>}
+                    <ul className="list-disc pl-5 text-ink-soft">{rv.notes.map((n: string) => <li key={n}>{n}</li>)}</ul>
+                    {rv.mustAcknowledge.length > 0 && !hand.done && <label className="flex items-start gap-2 rounded-lg bg-caution-soft p-3"><input type="checkbox" className="mt-1" checked={hand.ack} onChange={(e) => setHand({ ...hand, ack: e.target.checked })} /><span>{rv.mustAcknowledge.join(" ")} I have read this.</span></label>}
+                    {hand.done ? <p className="rounded-lg bg-good-soft p-3">{hand.done.unchanged ? "This plan was already in Plans. " : "Added to Plans as an unsigned proposal. "}Nothing has been signed, sent or run. <Link className="text-accent underline" href={hand.done.caseUrl}>Open it in Plans to review and sign</Link>.</p>
+                      : <div className="flex gap-2"><Btn busy={hand.busy} disabled={rv.mustAcknowledge.length > 0 && !hand.ack} onClick={addToPlans}>Add to Plans as an unsigned proposal</Btn><Btn variant="ghost" onClick={() => setHand(null)}>Cancel</Btn></div>}
+                  </div>); })()}
+              </Card>
+            )}
+
+            {/* 3. The detail, one click away */}
+            <div className="flat-list rise">
+              {res?.comparison && (
+                <Disclosure title="What changed" takeaway={`Compared with "${res.comparison.previousName}"`} open={res.comparison.changed}>
+                  <ul className="list-disc space-y-1 pl-5 text-sm">{res.comparison.lines.map((l: string) => <li key={l}>{l}</li>)}</ul>
+                </Disclosure>
+              )}
+
+              <Disclosure title="Compare strategies" takeaway={`${ev2.candidates.length} tried against this scenario`} open>
+                {ev2.candidates.length === 0 ? <p className="text-sm">{ev2.whyPreferred.join(" ")}</p> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-panel-quiet"><tr><Th>Strategy</Th><Th>Result</Th><Th right>Lowest balance</Th><Th right>Cost</Th><Th right>Still short</Th></tr></thead>
+                      <tbody>
+                        <tr className="row-hover border-t border-line align-top"><td className="py-3 pl-4 pr-3 font-medium">Do nothing</td><td className="pr-3 pt-3"><Chip tone={ev2.nothing.outcome === "resolves" ? "good" : "danger"}>{ev2.nothing.outcome === "resolves" ? "No shortage" : "Shortage"}</Chip></td><td className="num py-3 pr-3 text-right">{money(ev2.nothing.minBalanceMinor, cur)}</td><td className="py-3 pr-3 text-right text-ink-soft">–</td><td className="num py-3 pr-4 text-right">{money(ev2.nothing.stillShortMinor, cur)}</td></tr>
+                        {ev2.candidates.map((c: any) => (
+                          <tr key={c.id} className={`row-hover border-t border-line align-top ${c.id === ev2.recommendedId ? "bg-accent-soft/40" : ""}`}>
+                            <td className="py-3 pl-4 pr-3"><p className="font-medium">{c.title}{c.id === ev2.recommendedId && <span className="ml-2"><Chip tone="accent">Recommended</Chip></span>}</p>
+                              <details className="mt-1 text-xs"><summary className="cursor-pointer text-accent">Terms, borrowing and risks</summary>
+                                <ul className="mt-1 space-y-0.5 text-ink-soft">{c.leverText.map((t: string) => <li key={t}>{t}</li>)}</ul>
+                                <p className="mt-1 text-ink-soft">{c.borrows ? `Borrows ${money(c.advanceMinor, cur)}, repays ${money(c.repaymentMinor, cur)}. ` : ""}{c.counterparties} part{c.counterparties === 1 ? "y" : "ies"} must agree. If customers slip 14 more days: {money(c.stressMinBalanceMinor, cur)}, {c.holdsUnderStress ? "holds" : "does not hold"}.</p>
+                                <ul className="mt-1 list-disc pl-4 text-ink-soft">{[...c.reasons, ...c.risks].map((t: string) => <li key={t}>{t}</li>)}</ul></details>
+                              {isOwner && (c.outcome === "resolves" || c.outcome === "reduces") && <Btn variant="secondary" className="mt-2 !px-3 !py-1 text-xs" disabled={hand?.busy} onClick={() => review(c.id)}>Review in Plans</Btn>}</td>
+                            <td className="pr-3 pt-3"><Chip tone={OUTCOME[c.outcome].tone}>{OUTCOME[c.outcome].label}</Chip></td>
+                            <td className="num py-3 pr-3 text-right">{money(c.minBalanceMinor, cur)}</td><td className="num py-3 pr-3 text-right">{money(c.costMinor, cur)}</td><td className="num py-3 pr-4 text-right">{money(c.stillShortMinor, cur)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Disclosure>
+
+              <Disclosure title="Why this recommendation" takeaway={rec ? "What it relies on and what could go wrong" : "Why nothing is needed"}>
+                <ul className="list-disc space-y-1 pl-5 text-sm">{ev2.whyPreferred.map((l: string) => <li key={l}>{l}</li>)}</ul>
+                {ev2.strategy && (
+                  <div className="mt-4 grid gap-5 text-sm md:grid-cols-2">
+                    <div><h3 className="font-medium">It relies on</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{ev2.strategy.assumptions.map((l: string) => <li key={l}>{l}</li>)}</ul></div>
+                    <div><h3 className="font-medium">What could still go wrong</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{[...ev2.strategy.risks, ...(ev2.strategy.ifRefused ?? [])].map((l: string) => <li key={l}>{l}</li>)}</ul></div>
+                    {((ev2.strategy.known?.length ?? 0) > 0 || (ev2.strategy.untested?.length ?? 0) > 0) && <div className="md:col-span-2"><h3 className="font-medium">What counterparties have said, and what is assumed</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{[...(ev2.strategy.known ?? []), ...(ev2.strategy.untested ?? [])].map((l: string) => <li key={l}>{l}</li>)}</ul></div>}
+                  </div>
+                )}
+              </Disclosure>
+
+              <Disclosure title="Assumptions and limitations" takeaway="How this was calculated, and what it does not cover">
+                <div className="space-y-4 text-sm">
+                  <ul className="list-disc space-y-1 pl-5">{report.causes.lines.map((l: string) => <li key={l}>{l}</li>)}</ul>
+                  <details><summary className="cursor-pointer text-accent">What moved in the forecast</summary>
+                    <ul className="mt-2 space-y-1">{report.causes.changedItems.map((c: any, i: number) => <li key={`${i}-${c.label}`}>{c.label}: {c.before ? `${money(c.before.amountMinor, cur)} on ${date(c.before.date)}` : "not expected"} → {c.after ? `${money(c.after.amountMinor, cur)} on ${date(c.after.date)}` : "gone"}</li>)}</ul>
+                    <p className="mt-2 text-xs text-ink-soft">Assumed: {report.scenario.assumptions.join(" ")}</p>
+                  </details>
+                  <div><h3 className="font-medium">This is a simulation</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{report.notices.map((n: string) => <li key={n}>{n}</li>)}<li>To act on a real shortage, open <Link className="text-accent underline" href="/room/case">Plans</Link>: your real books are re-checked, you review and sign, and the permission gate and any second approver apply before anything runs.</li></ul></div>
+                  <div><h3 className="font-medium">Not covered</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{report.limits.map((l: string) => <li key={l}>{l}</li>)}</ul></div>
+                </div>
+              </Disclosure>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Card, Chip, Empty, ErrorNote, Loading, Stat } from "@/ui/kit";
+import { Card, Chip, ErrorNote, Loading, Metric } from "@/ui/kit";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 
@@ -18,15 +18,14 @@ export default function Scoreboard() {
   const s = sb.summary;
   return (
     <div className="space-y-6">
-      <div><h2 className="display text-2xl">Results</h2><p className="text-ink-soft">What doing nothing would have cost against what your assistant&apos;s plan achieved. Every figure is calculated or counted from the tamper-evident log, never written by the AI.</p></div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Cases" value={s.commitmentsAndShortages} />
-        <Stat label="Executed" value={s.executed} />
-        <Stat label="Verified" value={s.verified} tone={s.verificationFailed ? "caution" : "good"} sub={s.verificationFailed ? `${s.verificationFailed} failed` : "none failed"} />
-        <Stat label="Owner approvals" value={s.ownerApprovals} sub="signatures you gave" />
-        <Stat label="Denied or blocked" value={s.deniedOrBlocked} sub="actions the system refused" />
+      <div className="strip grid-cols-2 lg:grid-cols-5" aria-label="Summary">
+        <Metric label="Cases" value={s.commitmentsAndShortages} />
+        <Metric label="Executed" value={s.executed} />
+        <Metric label="Verified" value={s.verified} tone={s.verificationFailed ? "caution" : "good"} sub={s.verificationFailed ? `${s.verificationFailed} failed` : "none failed"} />
+        <Metric label="Owner approvals" value={s.ownerApprovals} sub="signatures you gave" />
+        <Metric label="Denied or blocked" value={s.deniedOrBlocked} sub="refused by the system" />
       </div>
-      {sb.entries.length === 0 && <Empty title="Nothing to score yet">Cases appear here once your assistant has proposed plans for an order or quote or a shortage.</Empty>}
+      {sb.entries.length === 0 && <p className="text-sm text-ink-soft">No cases yet. Each one appears here, with what doing nothing would have cost, once your assistant proposes plans.</p>}
       {sb.entries.map((e: any) => {
         const dn = e.doNothing, ex = e.executedPlan;
         const max = Math.max(1, ...[dn?.minBalanceMinor, ex?.minBalanceMinor].filter(Boolean).map((v: string) => Math.abs(Number(BigInt(v) / 100n))));

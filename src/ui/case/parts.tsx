@@ -3,6 +3,7 @@
 // Presentational parts of the shortage case: stepper, planner timeline, plan comparison, execution, re-plan and verification.
 import { useState } from "react";
 import { Btn, Card, Chip, Th, type Tone } from "../kit";
+import { Icon } from "../icons";
 import { planLabel } from "./plan-label";
 import { constraintText, date, dateTime, leverText, money, pct, week } from "../format";
 
@@ -10,12 +11,19 @@ export const nameOf = (names: Record<string, string>, id: string) => (names[id] 
 
 // ---------------------------------------------------------------- stepper
 export function Stepper({ steps }: { steps: { label: string; state: "done" | "active" | "todo" | "bad" }[] }) {
+  // A horizontal timeline: found -> proposed -> signed -> happened -> verified. State is shown by icon and text as well as colour.
+  const word = { done: "Done", active: "Now", todo: "Later", bad: "Stopped" } as const;
   return (
-    <div className="overflow-x-auto">
-      <ol className="grid min-w-[40rem] grid-cols-5 gap-2" aria-label="Progress of this case">
+    <div className="surface overflow-x-auto p-5">
+      <ol className="grid min-w-[40rem] grid-cols-5" aria-label="Progress of this case">
         {steps.map((s, i) => (
-          <li key={s.label} aria-current={s.state === "active" ? "step" : undefined} className={`rounded-xl border px-3 py-2 text-sm ${s.state === "done" ? "border-good/40 bg-good-soft text-good" : s.state === "active" ? "border-accent bg-accent-soft text-accent" : s.state === "bad" ? "border-danger/40 bg-danger-soft text-danger" : "border-line bg-panel text-ink-soft"}`}>
-            <span className="num text-xs opacity-70">{i + 1}</span> <span className="font-medium">{s.label}</span>
+          <li key={s.label} aria-current={s.state === "active" ? "step" : undefined} className="relative flex flex-col items-center gap-2 text-center">
+            {i > 0 && <span aria-hidden className={`absolute right-1/2 top-4 h-0.5 w-full -translate-y-1/2 ${s.state === "todo" ? "bg-line" : s.state === "bad" ? "bg-danger/40" : "bg-accent/50"}`} />}
+            <span className={`relative grid h-8 w-8 place-items-center rounded-full border-2 text-xs font-semibold ${s.state === "done" ? "border-good bg-good text-white" : s.state === "active" ? "border-accent bg-white text-accent shadow-[0_0_0_4px_rgb(29_90_76/0.14)]" : s.state === "bad" ? "border-danger bg-danger text-white" : "border-line-strong bg-white text-ink-soft"}`}>
+              {s.state === "done" ? <Icon name="check" size={16} /> : s.state === "bad" ? <Icon name="close" size={14} /> : <span className="num">{i + 1}</span>}
+            </span>
+            <span className={`text-sm font-medium ${s.state === "todo" ? "text-ink-soft" : "text-ink"}`}>{s.label}</span>
+            <span className={`text-[11px] ${s.state === "bad" ? "text-danger" : s.state === "done" ? "text-good" : s.state === "active" ? "text-accent" : "text-ink-soft"}`}>{word[s.state]}</span>
           </li>
         ))}
       </ol>

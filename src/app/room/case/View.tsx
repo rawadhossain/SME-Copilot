@@ -1,13 +1,13 @@
 "use client";
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Chart, type Series } from "@/ui/Chart";
 import { ExecutionPanel, ExhaustedCard, ReplanPanel, PlanTable, RunChips, Stepper, Timeline, VerificationPanel } from "@/ui/case/parts";
 import { EditPlanDialog } from "@/ui/case/EditPlanDialog";
 import { SignDialog } from "@/ui/case/SignDialog";
-import { Btn, Card, Chip, Empty, ErrorNote, Loading } from "@/ui/kit";
+import { Btn, Card, Chip, DeepLink, Empty, ErrorNote, Loading, PageHead } from "@/ui/kit";
+import { Icon } from "@/ui/icons";
 import { OutcomeSummary } from "@/ui/rescue";
 import { AdaptationCard } from "@/ui/case/Adaptation";
 import { date, money, week } from "@/ui/format";
@@ -83,10 +83,15 @@ function Case() {
   if (!cases || (rootId && !data && !error)) return <Loading label="Opening the case" />;
   if (!rootId || !run) {
     return (
-      <div className="space-y-4">
-        <h1 className="display text-3xl">Plans</h1>
+      <div className="space-y-6">
+        <PageHead title="Plans" sub="You choose and sign; the assistant cannot act on its own" back={{ href: "/room", label: "Today" }} />
+        <div className="grid gap-3 md:grid-cols-3">
+          {([["1", "Investigate", "It finds what is driving the gap, from your own records."], ["2", "You choose and sign", "Compare options. Only what you sign inside your limits can run."], ["3", "Act and verify", "It acts in the sandbox, then a separate check confirms it did."]] as const).map(([n, t, d]) => (
+            <div key={n} className="surface p-5"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent-soft text-sm font-semibold text-accent">{n}</span><p className="display mt-3 text-[16px]">{t}</p><p className="mt-1 text-sm text-ink-soft">{d}</p></div>
+          ))}
+        </div>
         <Empty title="Nothing to decide right now" action={<div className="flex justify-center gap-2"><Btn busy={!!busy} onClick={() => act("check", `/api/business/${biz}/shortage-check`)}>Check for a shortage now</Btn><Btn variant="secondary" href="/room/commitments">Add a document</Btn></div>}>
-          A case opens when the forecast shows a shortage: after you confirm a commitment, or when you ask for a check. Your assistant then investigates and proposes plans. It cannot act on its own.
+          A case opens when the forecast shows a shortage.
         </Empty>
         {error && <ErrorNote>{error}</ErrorNote>}
       </div>
@@ -108,11 +113,11 @@ function Case() {
   const finished = auths.some((a) => a.execution && ["completed", "verification_failed", "rolled_back", "failed"].includes(a.execution.status)) && lastRun.lifecycle !== "needs_replan";
   const stepState = (done: boolean, active: boolean, bad = false) => (bad ? "bad" : done ? "done" : active ? "active" : "todo") as "done" | "active" | "todo" | "bad";
   const steps = [
-    { label: "Problem found", state: stepState(true, false) },
-    { label: "Options ready", state: stepState(hasPlans, !hasPlans && run.status !== "running") },
-    { label: "You approve", state: stepState(signed, (hasPlans && !signed) || !!waitingSecond) },
-    { label: "Assistant acts", state: stepState(ran && !["needs_replan"].includes(lastRun.lifecycle), signed && !ran, lastRun.lifecycle === "needs_replan" || lastRun.lifecycle === "exhausted") },
-    { label: "Checked", state: stepState(verified, ran && !verified && !vfail && !haltedClean && !haltedUnclean && !["needs_replan", "exhausted"].includes(lastRun.lifecycle), vfail || haltedClean || haltedUnclean) },
+    { label: "What was found", state: stepState(true, false) },
+    { label: "What was proposed", state: stepState(hasPlans, !hasPlans && run.status !== "running") },
+    { label: "What you signed", state: stepState(signed, (hasPlans && !signed) || !!waitingSecond) },
+    { label: "What happened", state: stepState(ran && !["needs_replan"].includes(lastRun.lifecycle), signed && !ran, lastRun.lifecycle === "needs_replan" || lastRun.lifecycle === "exhausted") },
+    { label: "Verified", state: stepState(verified, ran && !verified && !vfail && !haltedClean && !haltedUnclean && !["needs_replan", "exhausted"].includes(lastRun.lifecycle), vfail || haltedClean || haltedUnclean) },
   ];
 
   const series: Series[] = [];
@@ -127,16 +132,13 @@ function Case() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="display text-3xl">Plans</h1>
-          <h2 className="display mt-1 text-xl text-ink-soft">{run.trigger?.origin === "simulation" ? "Prepare for a simulated crisis" : "Fix the cash gap"}</h2>
-          <p className="text-ink-soft">{run.trigger?.origin === "simulation" ? <>You asked to prepare for a scenario from the simulator. It has not happened. On today&apos;s real books, doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing?.minBalanceMinor, cur)}</b> in {week(run.doNothing?.minBalanceWeek)}.</> : reason ? <>The forecast showed {reason.kind === "below_zero" ? "you running out of cash" : "you dropping below your reserve"}: lowest <b className="num">{money(reason.minBalanceMinor, cur)}</b> in {week(reason.minBalanceWeek)}{reason.firstNegativeWeek ? `, below zero from ${week(reason.firstNegativeWeek)}` : ""}.</> : run.doNothing ? <>A new order or quote started this case. Doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing.minBalanceMinor, cur)}</b> in {week(run.doNothing.minBalanceWeek)}.</> : "A new order or quote started this case."}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=html`} download>Download the full record</a>
-          <a className="rounded-lg border border-line-strong bg-panel px-3 py-2 font-medium text-accent hover:bg-neutral-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=json`} download>Data file (JSON)</a>
-        </div>
+      <PageHead title={run.trigger?.origin === "simulation" ? "Prepare for a simulated crisis" : "Fix the cash gap"} back={{ href: "/room", label: "Today" }}
+        sub={<>{run.trigger?.origin === "simulation" ? <>You asked to prepare for a scenario from the simulator. It has not happened. On today&apos;s real books, doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing?.minBalanceMinor, cur)}</b> in {week(run.doNothing?.minBalanceWeek)}.</> : reason ? <>The forecast showed {reason.kind === "below_zero" ? "you running out of cash" : "you dropping below your reserve"}: lowest <b className="num">{money(reason.minBalanceMinor, cur)}</b> in {week(reason.minBalanceWeek)}{reason.firstNegativeWeek ? `, below zero from ${week(reason.firstNegativeWeek)}` : ""}.</> : run.doNothing ? <>A new order or quote started this case. Doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing.minBalanceMinor, cur)}</b> in {week(run.doNothing.minBalanceWeek)}.</> : "A new order or quote started this case."}</>}
+        actions={<>
+          <a className="press inline-flex h-10 items-center gap-2 rounded-xl border border-line-strong bg-panel px-4 text-sm font-medium text-ink hover:border-accent/40 hover:bg-accent-soft/60" href={`/api/business/${biz}/cases/${rootId}/export?format=html`} download><Icon name="down" size={15} />Download the record</a>
+          <a className="press inline-flex h-10 items-center rounded-xl px-3 text-sm font-medium text-accent hover:bg-accent-soft" href={`/api/business/${biz}/cases/${rootId}/export?format=json`} download>JSON</a>
+        </>} />
+      <div className="flex justify-end">
         {roots.length > 1 && (
           <label className="text-sm text-ink-soft">Case <select className="ml-2 rounded-lg border border-line-strong bg-white px-2 py-1.5 text-ink" value={rootId} onChange={(e) => { setRootId(e.target.value); setData(null); setRoundIdx(null); setSelected(null); setLines(null); }}>
             {roots.map((c) => <option key={c.runId} value={c.runId}>{date(c.startedAt)} · {c.lifecycle}</option>)}</select></label>
@@ -158,10 +160,10 @@ function Case() {
           : signed && !ran ? ["You approved a plan. Now let your assistant carry it out.", "It will negotiate and act, but every step must pass your limits first."]
           : hasPlans ? ["Your assistant found ways to fix this. Pick one.", "Compare the options below. Nothing is sent to anyone until you review and sign one: signing is what gives your assistant permission, and only within the limits shown."]
           : ["Your assistant is working on it.", "It reads your numbers and searches for combinations of fixes."];
-        return <div className={`rounded-2xl border p-4 ${tone === "good" ? "border-good/40 bg-good-soft" : tone === "danger" ? "border-danger/40 bg-danger-soft" : tone === "caution" ? "border-caution/40 bg-caution-soft" : "border-accent/30 bg-accent-soft/50"}`}><p className="display text-xl">{head}</p><p className="mt-1 text-sm text-ink-soft">{body}</p></div>;
+        return <div className={`flex items-start gap-4 rounded-2xl border p-5 shadow-soft ${tone === "good" ? "border-good/40 bg-good-soft" : tone === "danger" ? "border-danger/40 bg-danger-soft" : tone === "caution" ? "border-caution/40 bg-caution-soft" : "border-accent/30 bg-accent-soft/60"}`}><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white ${tone === "good" ? "text-good" : tone === "danger" ? "text-danger" : tone === "caution" ? "text-caution" : "text-accent"}`} aria-hidden><Icon name={tone === "good" ? "check" : tone === "danger" ? "close" : tone === "caution" ? "clock" : "ask"} size={18} /></span><div className="min-w-0"><p className="display text-xl">{head}</p><p className="mt-1 text-sm text-ink-soft">{body}</p></div></div>;
       })()}
       {error && <ErrorNote>{error}</ErrorNote>}
-      <p className="text-sm"><Link className="text-accent underline" href={`/room/safety?tab=workflow&mode=debug&case=${rootId}`}>See this case on the workflow canvas</Link> <span className="text-ink-soft">(Debug mode)</span></p>
+      <p className="text-sm"><DeepLink href={`/room/safety?tab=workflow&mode=debug&case=${rootId}`}>See this case on the workflow canvas</DeepLink> <span className="text-ink-soft">(Debug mode)</span></p>
 
       {runs.length > 1 && (
         <div role="tablist" aria-label="Planning rounds" className="flex flex-wrap gap-2">
@@ -226,7 +228,7 @@ function Case() {
       {auths.filter((a) => a.execution?.verification).map((a) => (
         <Card key={`v-${a.authorisation.id}`} title="Independent check" subtitle="Done by a separate piece of code, not the one that carried out the plan." tone={a.execution.verification.ok ? "good" : "danger"}>
           <VerificationPanel v={a.execution.verification} cur={cur} />
-          <p className="mt-3 text-sm"><Link className="text-accent underline" href="/room/safety?tab=results">See the results</Link> · <Link className="text-accent underline" href="/room/safety?tab=records">Read the records</Link></p>
+          <p className="mt-3 flex flex-wrap gap-4 text-sm"><DeepLink href="/room/safety?tab=results">See the results</DeepLink><DeepLink href="/room/safety?tab=records">Read the records</DeepLink></p>
         </Card>
       ))}
 

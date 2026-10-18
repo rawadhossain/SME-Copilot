@@ -63,6 +63,20 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Owner automations can only NOTIFY, PREPARE or DRAFT. The runner, its admin and the notification code must never import the signing, approval, execution,
+  // sandbox-write, mandate or hand-off code (relative and aliased paths both match). The vocabulary (src/domain/automation*.ts) is pure.
+  {
+    files: ["src/actions/automations.ts", "src/actions/automation-admin.ts", "src/actions/notifications.ts", "src/domain/automation*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [{ name: "@/sandbox", message: "Automations never touch the sandbox." }, { name: "@/gate", message: "Automations never touch the gate." }],
+          patterns: [{ group: ["@/sandbox/**", "@/gate/**", "**/owner-signing", "**/approve", "**/owner-console", "**/payees", "**/plan-authorise", "**/plan-exec", "**/execute", "**/propose", "**/cancel", "**/flight-handoff", "**/revise", "**/plan-edit", "**/documents/confirm", "**/mandate*", "**/negotiation*"], message: "Automations can only notify, prepare or draft: they never sign, approve, execute, send, or change limits." }],
+        },
+      ],
+    },
+  },
   // The planning agent (src/agent) is READ-ONLY: it must not import the action pipeline, sandbox write operations, the
   // owner-signing or approval code, the document confirmation path, or the database. It may use pure engine functions,
   // the pure gate evaluate function, and the pure parts of the sandbox protocol. (ADR-015)

@@ -10,6 +10,7 @@ import { alerts, businesses, recoveryCases } from "@/db/schema";
 import { evaluateAlerts, SEVERITY_RANK, type AlertSeverity, type CandidateAlert } from "@/engine";
 import { toJsonValue } from "@/sandbox/proposals";
 import { buildContext } from "./agent-run";
+import { runAutomationsAfterMonitor, type AutoSnapshot } from "./automations";
 import { getInsights } from "./insights";
 import { appendRecord } from "./log";
 import { assessRecovery, runRecovery } from "./recovery";
@@ -40,13 +41,21 @@ async function snapshotCandidates(db: Db, businessId: string) {
     invoices: ctx.input.invoices, bills: ctx.input.bills, insights: insights.findings,
     recovery: { strategyId: recovery.strategy?.authorisationId ?? null, events: material.map((e) => ({ kind: e.kind, key: e.key, text: e.text, counterpartyId: e.counterpartyId })), caseId: existingCase?.id ?? null },
   });
-  return { asOf: ctx.asOf, candidates };
+  const snap: Omit<AutoSnapshot, "raised" | "reason"> = { asOf: ctx.asOf, currency: ctx.currency, reserveMinor: ctx.input.reserve, weekly: shortage.weekly, invoices: ctx.input.invoices, bills: ctx.input.bills, candidates };
+  return { asOf: ctx.asOf, candidates, snap };
+}
+
+/** What the automations read, for a dry run: the same snapshot the monitor pass builds, with nothing raised. Read-only. */
+export async function loadAutomationSnapshot(db: Db, businessId: string): Promise<AutoSnapshot> {
+  const { snap } = await snapshotCandidates(db, businessId);
+  return { ...snap, raised: [], reason: "dry_run" };
 }
 
 export async function runMonitor(db: Db, businessId: string, opts: { reason: string; recovery?: Parameters<typeof runRecovery>[2] } = { reason: "manual" }): Promise<MonitorResult> {
   const [biz] = await db.select({ id: businesses.id }).from(businesses).where(eq(businesses.id, businessId));
   if (!biz) throw new ActionError("not_found", "Business not found");
-  const { asOf, candidates } = await snapshotCandidates(db, businessId);
+  const { asOf, candidates, snap } = await snapshotCandidates(db, businessId);
+  const raisedNow: AutoSnapshot["raised"] = [];
 
   // Off-track strategy + the flag: start the existing recovery once. Its single-flight guard makes a repeat harmless.
   let recoveryCaseId: string | null = null;
@@ -78,6 +87,7 @@ export async function runMonitor(db: Db, businessId: string, opts: { reason: str
         }).returning({ id: alerts.id });
         await appendRecord(tx, { businessId, event: ACTION_EVENTS.ALERT_RAISED, actor: "system", detail: { alertId: row.id, kind: c.kind, severity: c.severity, dedupeKey: c.dedupeKey, asOf } });
         counts.raised++;
+        raisedNow.push({ kind: c.kind, severity: c.severity, dedupeKey: c.dedupeKey, title: c.title, detail: c.detail, route: c.refs.route });
         continue;
       }
       byKey.delete(c.dedupeKey);
@@ -92,6 +102,7 @@ export async function runMonitor(db: Db, businessId: string, opts: { reason: str
       if (up) {
         await appendRecord(tx, { businessId, event: ACTION_EVENTS.ALERT_ESCALATED, actor: "system", detail: { alertId: a.id, kind: c.kind, from: a.severity, to: c.severity, dedupeKey: c.dedupeKey, reopened: status !== a.status } });
         counts.escalated++;
+        raisedNow.push({ kind: c.kind, severity: c.severity, dedupeKey: c.dedupeKey, title: c.title, detail: c.detail, route: c.refs.route });
       } else counts.updated++;
     }
     // Whatever is left was open or acknowledged and is no longer true: resolved.
@@ -106,6 +117,10 @@ export async function runMonitor(db: Db, businessId: string, opts: { reason: str
     counts.acknowledged = now2.filter((x) => x.status === "acknowledged").length;
     await appendRecord(tx, { businessId, event: ACTION_EVENTS.MONITOR_RUN, actor: "system", detail: { reason: opts.reason, asOf, ...counts, recoveryCaseId, recoveryStarted } });
   });
+  // Owner automations run after the monitor has evaluated. They can only notify, prepare or draft, and a failure here never fails the monitor.
+  try {
+    await runAutomationsAfterMonitor(db, businessId, { ...snap, raised: raisedNow, reason: opts.reason });
+  } catch { /* best effort */ }
   return { asOf, counts, recoveryCaseId, recoveryStarted, reason: opts.reason, ranAt: new Date().toISOString() };
 }
 

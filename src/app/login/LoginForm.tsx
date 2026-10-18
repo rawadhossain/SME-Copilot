@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Btn, ErrorNote, Field, inputClass } from "@/ui/kit";
+import { Btn, ErrorNote, Field, inputClass, Note } from "@/ui/kit";
 import { call } from "@/ui/session";
 
 export default function LoginForm({ demo }: { demo: boolean }) {
@@ -22,21 +22,32 @@ export default function LoginForm({ demo }: { demo: boolean }) {
     setBusy(false);
   }
 
+  const points = [
+    ["Watches and suggests", "Reads your books, spots a cash gap early, lays out fixes. Every figure is calculated."],
+    ["You set limits and sign", "Nothing happens without your signature."],
+    ["Acts only inside them", "Every step is checked and written to a record nobody can quietly change."],
+  ];
   return (
-    <main className="mx-auto grid min-h-screen max-w-5xl items-center gap-10 px-6 py-12 md:grid-cols-2">
+    <main className="mx-auto grid min-h-screen max-w-5xl items-center gap-12 px-6 py-12 md:grid-cols-[1.1fr_1fr]">
       <section>
-        <p className="text-sm font-medium uppercase tracking-[0.18em] text-accent">Ledgerhand</p>
-        <h1 className="display mt-3 text-4xl leading-tight md:text-5xl">Know where your cash is heading. <span className="text-accent">You stay in charge.</span></h1>
-        <ol className="mt-8 space-y-4 text-ink-soft">
-          <li className="flex gap-3"><span className="display text-accent">1</span><span><b className="text-ink">It watches and suggests.</b> It reads your books and the orders and quotes you add, spots a cash shortage early and lays out ways to fix it. Every figure is calculated, never guessed.</span></li>
-          <li className="flex gap-3"><span className="display text-accent">2</span><span><b className="text-ink">You set the limits and sign.</b> Nothing happens without your signature, and your signature covers exactly what you read.</span></li>
-          <li className="flex gap-3"><span className="display text-accent">3</span><span><b className="text-ink">It acts only inside them.</b> Every step is checked, confirmed separately and written to a record nobody can quietly change.</span></li>
-        </ol>
-        {demo && <p className="mt-8 rounded-lg border border-caution/40 bg-caution-soft px-3 py-2 text-sm text-caution">This is a demonstration with made-up data. No real money moves and no real bank or lender is contacted.</p>}
+        <p className="flex items-center gap-2.5 text-[17px] font-semibold tracking-tight text-ink">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-b from-[#2b7563] to-accent text-white shadow-[0_1px_2px_rgb(21_68_57/0.35),0_1px_0_rgb(255_255_255/0.2)_inset]" aria-hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19V9M12 19V5M19 19v-7" /></svg></span>
+          Ledgerhand
+        </p>
+        <h1 className="display mt-8 text-4xl leading-[1.1] md:text-[44px]">Know where your cash is heading. <span className="text-accent">You stay in charge.</span></h1>
+        <ul className="mt-8 space-y-4">
+          {points.map(([t, d], i) => (
+            <li key={t} className="flex items-start gap-3.5">
+              <span className="num grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-soft text-[13px] font-semibold text-accent">{i + 1}</span>
+              <span className="text-[15px] text-ink-soft"><b className="font-medium text-ink">{t}.</b> {d}</span>
+            </li>
+          ))}
+        </ul>
+        {demo && <div className="mt-8"><Note>Demonstration with made-up data. No real money moves.</Note></div>}
       </section>
-      <form onSubmit={submit} className="rounded-2xl border border-line bg-panel p-7 shadow-sm" aria-label="Sign in">
+      <form onSubmit={submit} className="glass-pop rounded-3xl p-8" aria-label="Sign in">
         <h2 className="display text-2xl">Sign in</h2>
-        <p className="mb-5 text-sm text-ink-soft">Use the email and password for your account.</p>
+        <p className="mb-6 mt-1 text-sm text-ink-soft">Use the email and password for your account.</p>
         <div className="space-y-4">
           <Field label="Email"><input className={inputClass} type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
           <Field label="Password"><input className={inputClass} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus={!demo || email !== ""} /></Field>

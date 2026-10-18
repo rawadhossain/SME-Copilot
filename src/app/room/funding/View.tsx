@@ -3,10 +3,11 @@
 // Funding options: the owner types the terms of the offers received; plain code compares them with NOT borrowing.
 // The browser does no money arithmetic: amounts go to the server as typed, and every figure shown comes back from the engine.
 import { useEffect, useState } from "react";
-import { Btn, Card, Chip, Empty, ErrorNote, Field, Stat, Th, inputClass, type Tone } from "@/ui/kit";
+import { Btn, Card, Chip, Disclosure, ErrorNote, Field, Stat, Th, inputClass, type Tone, PageHead } from "@/ui/kit";
 import { Chart, type Series } from "@/ui/Chart";
 import { date, money, pct, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
+import { Icon } from "@/ui/icons";
 import { Decision } from "@/ui/funding/Decision";
 import { Products } from "@/ui/funding/Products";
 
@@ -90,6 +91,7 @@ export default function Funding() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const [showForms, setShowForms] = useState(false); // the offer forms appear when you have saved offers, add a product, or ask for one
   const [contractFor, setContractFor] = useState(0);
   const [contract, setContract] = useState<Form>(() => blank(0));
   const [contractResult, setContractResult] = useState<any>(null);
@@ -98,7 +100,7 @@ export default function Funding() {
   useEffect(() => {
     if (!biz) return;
     void call(`/api/business/${biz}/funding/offers`).then((r) => {
-      if (r.ok && Array.isArray(r.data.forms) && r.data.forms.length > 0) { setForms(r.data.forms.map((b: any, i: number) => fromBody(b, i + 1))); setSaved("Your saved offers are shown."); }
+      if (r.ok && Array.isArray(r.data.forms) && r.data.forms.length > 0) { setForms(r.data.forms.map((b: any, i: number) => fromBody(b, i + 1))); setSaved("Your saved offers are shown."); setShowForms(true); }
     });
   }, [biz]);
 
@@ -109,7 +111,7 @@ export default function Funding() {
       const f = fromBody(body, fs.length + 1);
       return fs.length === 1 && !fs[0].principal && !fs[0].lender ? [f] : fs.length >= 6 ? fs : [...fs, f];
     });
-    setResult(null);
+    setResult(null); setShowForms(true);
     setSaved(`Added "${body.id}" to the comparison below. Press "Compare with not borrowing" to see it next to your other options. These are indicative terms from a synthetic catalogue, not a quote.`);
     setTimeout(() => document.getElementById("offer-forms")?.scrollIntoView({ behavior: "smooth" }), 50);
   }
@@ -144,39 +146,51 @@ export default function Funding() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="display text-3xl">Funding</h1>
-        <p className="text-ink-soft">Type in the offers you have received. The system works out what each really costs and what it does to your cash, next to the choice of not borrowing at all. Nothing is sent to any lender and nothing is signed here.</p>
-      </div>
+      <PageHead title="Funding" sub="Nothing here is sent to a lender or signed" back={{ href: "/room", label: "Today" }} info="Whether you need to borrow, and the best way out if you do. Offers shown are examples, not quotes." />
 
       <Decision />
 
-      <Products onAdd={addToComparison} />
-
-      <div id="offer-forms" />
-
-      {forms.map((f, i) => (
-        <Card key={f.key} title={`Offer ${i + 1}`} right={forms.length > 1 ? <Btn variant="ghost" onClick={() => setForms((fs) => fs.filter((x) => x.key !== f.key))}>Remove</Btn> : undefined}>
-          <div className="grid gap-3 md:grid-cols-3">
-            <Field label="Short name"><input className={inputClass} value={f.id} onChange={(e) => set(f.key, { id: e.target.value })} maxLength={60} /></Field>
-            <Field label="Lender"><input className={inputClass} value={f.lender} onChange={(e) => set(f.key, { lender: e.target.value })} placeholder="Who is offering" maxLength={120} /></Field>
-            <Field label="Type of funding"><select className={inputClass} value={f.product} onChange={(e) => set(f.key, { product: e.target.value })}>{PRODUCTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+      <section className="space-y-4" aria-label="Compare an offer you have received">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="display text-[19px]">Compare an offer you have received</h2>
+            <p className="text-sm text-ink-soft">Type in a real offer to see its true cost and what repaying it does to your cash.</p>
           </div>
-          <div className="mt-3"><TermsFields f={f} set={(patch) => set(f.key, patch)} /></div>
-        </Card>
-      ))}
+          {!showForms && <Btn onClick={() => setShowForms(true)}><Icon name="plus" size={16} />Enter an offer</Btn>}
+        </div>
 
-      <div className="flex flex-wrap gap-3">
-        {forms.length < 6 && <Btn variant="secondary" onClick={() => setForms((fs) => [...fs, blank(fs.length + 1)])}>Add another offer</Btn>}
-        <Btn busy={busy} onClick={run} disabled={!biz}>Compare with not borrowing</Btn>
-        <Btn variant="secondary" busy={busy} onClick={save} disabled={!biz}>Save these offers</Btn>
-      </div>
-      {saved && <p className="text-sm text-good" role="status">{saved}</p>}
-      {error && <ErrorNote>{error}</ErrorNote>}
-      {!result && !error && <Empty title="Nothing compared yet">Fill in at least one offer and press compare. Use the exact figures from the offer letter. The result is an estimate for comparing offers, not the lender&apos;s official rate.</Empty>}
-      {result && <Results r={result} />}
+        <Disclosure title="Browse example products" takeaway="Indicative terms from a synthetic lender catalogue, checked against your books">
+          <Products onAdd={addToComparison} />
+        </Disclosure>
 
-      <Card title="Check a contract against an offer" subtitle="When a lender sends the contract, type in what it actually says. The system lists every way it differs from the offer you compared. Nothing is read by an AI here.">
+        <div id="offer-forms" />
+        {showForms && (
+          <>
+            {forms.map((f, i) => (
+              <Card key={f.key} title={`Offer ${i + 1}`} right={forms.length > 1 ? <Btn variant="ghost" onClick={() => setForms((fs) => fs.filter((x) => x.key !== f.key))}>Remove</Btn> : undefined}>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Field label="Short name"><input className={inputClass} value={f.id} onChange={(e) => set(f.key, { id: e.target.value })} maxLength={60} /></Field>
+                  <Field label="Lender"><input className={inputClass} value={f.lender} onChange={(e) => set(f.key, { lender: e.target.value })} placeholder="Who is offering" maxLength={120} /></Field>
+                  <Field label="Type of funding"><select className={inputClass} value={f.product} onChange={(e) => set(f.key, { product: e.target.value })}>{PRODUCTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+                </div>
+                <div className="mt-3"><TermsFields f={f} set={(patch) => set(f.key, patch)} /></div>
+              </Card>
+            ))}
+
+            <div className="flex flex-wrap gap-3">
+              {forms.length < 6 && <Btn variant="secondary" onClick={() => setForms((fs) => [...fs, blank(fs.length + 1)])}>Add another offer</Btn>}
+              <Btn busy={busy} onClick={run} disabled={!biz}>Compare with not borrowing</Btn>
+              <Btn variant="secondary" busy={busy} onClick={save} disabled={!biz}>Save these offers</Btn>
+            </div>
+            {saved && <p className="text-sm text-good" role="status">{saved}</p>}
+            {error && <ErrorNote>{error}</ErrorNote>}
+            {result && <Results r={result} />}
+          </>
+        )}
+      </section>
+
+      <Disclosure title="Check a contract against an offer" takeaway="When a lender sends the contract, see every way it differs from the offer">
+        <p className="mb-3 text-sm text-ink-soft">Type in what the contract says. Every difference from the offer you compared is listed. Nothing is read by an AI.</p>
         {forms.length > 1 && (
           <div className="mb-3 max-w-xs"><Field label="Which offer is this contract for?"><select className={inputClass} value={contractFor} onChange={(e) => setContractFor(Number(e.target.value))}>{forms.map((f, i) => <option key={f.key} value={i}>{f.id || `Offer ${i + 1}`}</option>)}</select></Field></div>
         )}
@@ -184,7 +198,7 @@ export default function Funding() {
         <div className="mt-4"><Btn busy={busy} onClick={checkContract} disabled={!biz}>Check the contract</Btn></div>
         {contractError && <div className="mt-3"><ErrorNote>{contractError}</ErrorNote></div>}
         {contractResult && <ContractResult r={contractResult} cur={session?.business.currency ?? "GBP"} />}
-      </Card>
+      </Disclosure>
     </div>
   );
 }

@@ -10,3 +10,10 @@ export async function ownerOrRefuse(req: Request, businessId: string): Promise<{
   if (session.user.role !== "owner") return NextResponse.json({ error: "Only the owner can change invoices, bills and payments." }, { status: 403 });
   return { name: session.user.displayName };
 }
+
+/** Any signed-in member of the business (owner or approver). Returns the session user, or the 401 response to send. */
+export async function memberOrRefuse(req: Request, businessId: string): Promise<{ id: string; name: string; role: "owner" | "approver" } | Response> {
+  const session = await sessionFromRequest(db, req);
+  if (!session || session.businessId !== businessId) return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+  return { id: session.user.id, name: session.user.displayName, role: session.user.role };
+}
