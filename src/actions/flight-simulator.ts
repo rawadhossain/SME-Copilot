@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { scenarioSchema, type ScenarioInput } from "@/domain/flight-scenario";
 import { appendRecord } from "./log";
 import { evaluateFlight, coordinateForContext, type FlightEvaluation } from "@/agent";
 import { formatMinor } from "@/agent/plan-builder";
@@ -14,7 +15,7 @@ import type { AgentToolContext } from "@/agent";
 import { sandboxReceipts } from "@/db/schema";
 import { mergeConstraints } from "@/domain/constraints";
 import type { Lever } from "@/domain/plan";
-import { adjustmentsOf, applyShocks, applyTermChanges, attributeShocks, buildForecast, changedItems, MAX_LATE_DAYS, MAX_SHOCKS, ShockError, viewOf, type Forecast, type ForecastView, type Shock } from "@/engine";
+import { adjustmentsOf, applyShocks, applyTermChanges, attributeShocks, buildForecast, changedItems, ShockError, viewOf, type Forecast, type ForecastView, type Shock } from "@/engine";
 import { parseDecimalToMinor, MoneyParseError } from "@/lib/money";
 import { buildContext } from "./agent-run";
 import { loadKnownConstraints } from "./negotiation-memory";
@@ -25,16 +26,8 @@ const EXPONENTS: Record<string, number> = { GBP: 2, USD: 2, EUR: 2, CNY: 2, HKD:
 
 // ---------------------------------------------------------------- input
 
-const id = z.string().uuid();
-const shockSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("customer_late"), counterpartyId: id, days: z.number().int().min(1).max(MAX_LATE_DAYS) }),
-  z.object({ kind: z.literal("customer_short"), counterpartyId: id, shortBps: z.number().int().min(1).max(10000) }),
-  z.object({ kind: z.literal("supplier_refuses"), counterpartyId: id, lever: z.enum(["supplier_defer_balance", "supplier_reduce_deposit", "both"]) }),
-  z.object({ kind: z.literal("unexpected_expense"), amount: z.string().trim().min(1).max(20), dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), label: z.string().trim().max(60).default("Unexpected expense") }),
-]);
-export const scenarioSchema = z.object({ name: z.string().trim().max(80).optional(), shocks: z.array(shockSchema).min(1).max(MAX_SHOCKS) });
+export { scenarioSchema, type ScenarioInput };
 export const simulateInputSchema = z.object({ scenario: scenarioSchema, /** A scenario to compare with (typically the previous run, before an assumption was changed). */ compareWith: scenarioSchema.optional() });
-export type ScenarioInput = z.output<typeof scenarioSchema>;
 
 // ---------------------------------------------------------------- the live world, as a context
 

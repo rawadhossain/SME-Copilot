@@ -49,6 +49,20 @@ const eslintConfig = defineConfig([
     files: ["src/app/api/actions/*/approve/route.ts", "src/app/api/business/*/approvals/route.ts", "src/app/api/plan-authorisations/*/second-approval/route.ts", "src/app/api/business/*/mandate/**/*.ts", "src/app/api/business/*/payees/**/*.ts", "src/app/api/business/*/console/route.ts", "src/app/api/business/*/plan-authorisations/**/route.ts", "src/app/api/demo/clone/route.ts", "src/app/api/extractions/*/confirm/route.ts", "src/app/api/extractions/*/reject/route.ts"],
     rules: { "no-restricted-imports": ["error", { paths: [{ name: "@/sandbox", importNames: ["sendProposal", "schedulePayment", "submitApplication", "executeDuePayments", "cancelPayment", "acceptApplicationOffer", "withdrawApplication", "withdrawThread", "scheduleReceipt", "cancelReceipt", "executeDueReceipts"], message: "Sandbox writes must go through src/actions (the gate)." }] }] },
   },
+  // The Copilot (src/actions/copilot.ts and its route) is READ-ONLY apart from one log record per question: it must never import plan authorisation, execution,
+  // approvals, sandbox writes, owner signing, the mandate code or the simulator hand-off.
+  {
+    files: ["src/actions/copilot.ts", "src/app/api/business/*/copilot/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [{ name: "@/sandbox", importNames: ["sendProposal", "schedulePayment", "submitApplication", "executeDuePayments", "cancelPayment", "acceptApplicationOffer", "withdrawApplication", "withdrawThread", "scheduleReceipt", "cancelReceipt", "executeDueReceipts"], message: "The Copilot never writes to the sandbox." }],
+          patterns: [{ group: ["**/gate/owner-signing", "**/actions/approve", "**/actions/owner-console", "**/actions/payees", "**/actions/plan-authorise", "**/actions/plan-exec", "**/actions/execute", "**/actions/propose", "**/actions/cancel", "**/actions/flight-handoff", "**/actions/revise", "**/actions/plan-edit", "**/documents/confirm", "**/actions/mandate*"], message: "The Copilot never signs, approves, executes, hands off or changes limits." }],
+        },
+      ],
+    },
+  },
   // The planning agent (src/agent) is READ-ONLY: it must not import the action pipeline, sandbox write operations, the
   // owner-signing or approval code, the document confirmation path, or the database. It may use pure engine functions,
   // the pure gate evaluate function, and the pure parts of the sandbox protocol. (ADR-015)

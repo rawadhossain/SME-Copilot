@@ -106,7 +106,6 @@ Legend: DONE = built and checked. PARTIAL = built with a gap. UNVERIFIED = built
 ## 3. Known defects
 - Database login for `sme_app` fails on the main database (checks were run on a throwaway Postgres).
 - `check:engine`, `check:agent`, `check:extract` fail on a fresh seed (date and recording dependent).
-- `live-plan.ts` and `live-verify.ts` no longer replay (recorded before the new levers).
 - Resubmitted plan for a different invoice amount keeps old letter wording.
 
 ## 4. Next phases

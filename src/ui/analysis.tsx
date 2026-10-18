@@ -98,6 +98,7 @@ export function AnalysisBody({ a }: { a: any }) {
         )}
         {pb.trend && <p className="mt-2 text-sm">In the last 90 days customers paid {pb.trend.recentAverage > 0 ? `${dayWord(pb.trend.recentAverage)} after` : pb.trend.recentAverage < 0 ? `${dayWord(-pb.trend.recentAverage)} before` : "on"} the due date on average, against {pb.trend.priorAverage > 0 ? `${dayWord(pb.trend.priorAverage)} after` : pb.trend.priorAverage < 0 ? `${dayWord(-pb.trend.priorAverage)} before` : "on"} in the 90 days before.</p>}
         {!pb.trend && <p className="mt-2 text-xs text-ink-soft">No trend yet: {pb.trendReason}</p>}
+        {a.concentration.topShareOfReceiptsBps === null && <p className="mt-1 text-xs text-ink-soft">Too few customers for a concentration figure{a.concentration.customersWithReceipts > 0 ? ` (${a.concentration.customersWithReceipts} with receipts; at least 4 are needed)` : ""}.</p>}
       </section>
 
       <section className="text-sm">

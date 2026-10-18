@@ -31,6 +31,26 @@ export function Card({ title, subtitle, right, children, tone, className = "" }:
   );
 }
 
+/** A Card that is a native <details>: the title and a one-line takeaway are always visible, the body opens on demand. A link to #id opens it. */
+export function Disclosure({ title, takeaway, chip, subtitle, right, tone, open, id, children }: { title: React.ReactNode; takeaway?: React.ReactNode; chip?: React.ReactNode; subtitle?: React.ReactNode; right?: React.ReactNode; tone?: Tone; open?: boolean; id?: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => { if (id && typeof window !== "undefined" && window.location.hash === `#${id}` && ref.current) { ref.current.open = true; ref.current.scrollIntoView({ block: "start" }); } }, [id]);
+  const border = tone === "danger" ? "border-danger/40" : tone === "caution" ? "border-caution/40" : tone === "good" ? "border-good/40" : "border-line";
+  return (
+    <details ref={ref} id={id} open={open} className={`group scroll-mt-20 rounded-2xl border ${border} bg-panel shadow-[0_1px_0_rgba(22,32,30,0.04)]`}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0"><span className="display block text-lg text-ink">{title}</span>{takeaway && <span className="block text-sm text-ink-soft">{takeaway}</span>}</span>
+        <span className="flex items-center gap-2">{chip}<span aria-hidden className="text-ink-soft transition-transform group-open:rotate-180">▾</span></span>
+      </summary>
+      <div className="border-t border-line px-5 pb-5 pt-4">
+        {subtitle && <p className="mb-3 text-sm text-ink-soft">{subtitle}</p>}
+        {right && <div className="mb-3">{right}</div>}
+        {children}
+      </div>
+    </details>
+  );
+}
+
 export function Stat({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: Tone }) {
   const color = tone === "danger" ? "text-danger" : tone === "good" ? "text-good" : tone === "caution" ? "text-caution" : "text-ink";
   return (

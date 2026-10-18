@@ -15,3 +15,4 @@ export { LETTER_ASSIST_PURPOSE, letterRewriteSchema, buildLetterRewriteMessages,
 export { checkProse, collectNumbers, claimsIn } from "./prose";
 import "./scripted";
 export { BAD_AGENT_PURPOSE, WEAK_AGENT_PURPOSE } from "./scripted";
+export * from "./copilot";

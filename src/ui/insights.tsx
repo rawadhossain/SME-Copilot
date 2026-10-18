@@ -4,7 +4,7 @@
 // computed by fixed rules in code. A rescue-plan search here is the same read-only search as "Re-check my cash"; nothing runs until the owner signs.
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Btn, Card, Chip, ErrorNote, Loading, type Tone } from "./kit";
+import { Btn, Chip, Disclosure, ErrorNote, Loading, type Tone } from "./kit";
 import { call } from "./session";
 import { date, money, pct } from "./format";
 
@@ -32,8 +32,8 @@ export function FinancialHealth({ biz, cur, busy, latestRunId, onPlanSearch }: {
   const noBank = p.historyFrom === null; // no bank transactions: show "No data", not 0.00
   const canSearch = data.findings.some((f: any) => f.actions.some((a: any) => a.kind === "plan_search"));
   return (
-    <div id="financial-health" className="scroll-mt-20">
-      <Card tone={statusTone} title={<span className="flex flex-wrap items-center gap-2">Financial health and early warnings <Chip tone={statusTone}>{statusText}</Chip></span>}
+    <div>
+      <Disclosure id="financial-health" tone={statusTone} title="Financial health and early warnings" takeaway={data.findings.length === 0 ? "Nothing to watch" : data.findings.length + " thing" + (data.findings.length === 1 ? "" : "s") + " to watch"} chip={<Chip tone={statusTone}>{statusText}</Chip>}
         subtitle={p.comparable ? `${data.headline} Compares the last ${p.windowDays} days (${date(p.current.from)} to ${date(p.current.to)}) with the ${p.windowDays} before.` : data.headline}>
         {!p.comparable && p.reason && <p className="mb-3 rounded-lg bg-neutral-soft px-3 py-2 text-sm text-ink-soft" role="note">Periods not compared: {p.reason}</p>}
         <dl className="mb-4 grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
@@ -83,7 +83,7 @@ export function FinancialHealth({ biz, cur, busy, latestRunId, onPlanSearch }: {
           <summary className="cursor-pointer text-xs text-accent">What this view cannot tell you</summary>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-ink-soft">{data.limits.map((l: string) => <li key={l}>{l}</li>)}</ul>
         </details>
-      </Card>
+      </Disclosure>
     </div>
   );
 }

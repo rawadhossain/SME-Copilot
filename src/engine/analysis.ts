@@ -59,7 +59,8 @@ export interface PaymentBehaviour {
 export interface MonthRow { month: string; inMinor: bigint; outMinor: bigint; netMinor: bigint; outByCategory: Record<string, bigint> }
 export interface MonthlyCash { availableMonths: number; months: MonthRow[]; partialMonth: MonthRow | null; reason: string | null; firstTransactionOn: string | null }
 export type Runway = { burning: true; months: number; monthlyBurnMinor: bigint; balanceMinor: bigint; monthsUsed: number } | { burning: false; monthsUsed: number; averageNetMinor: bigint } | { burning: null; reason: string };
-export interface Concentration { top: { customerId: string; name: string; receivedMinor: bigint; shareOfReceiptsBps: number; openMinor: bigint; shareOfOpenBps: number }[]; topShareOfReceiptsBps: number | null; topShareOfOpenBps: number | null; receiptsMonths: number; receiptsReason: string | null }
+export const MIN_CUSTOMERS_FOR_CONCENTRATION = 4;
+export interface Concentration { customersWithReceipts: number; top: { customerId: string; name: string; receivedMinor: bigint; shareOfReceiptsBps: number; openMinor: bigint; shareOfOpenBps: number }[]; topShareOfReceiptsBps: number | null; topShareOfOpenBps: number | null; receiptsMonths: number; receiptsReason: string | null }
 
 export interface AnalysisResult {
   v: 1;
@@ -219,9 +220,10 @@ export function analyse(input: AnalysisInput): AnalysisResult {
     .map((id) => ({ id, rec: received.get(id) ?? 0n, open: customers.find((c) => c.customerId === id)?.openMinor ?? 0n }))
     .sort((a, b) => (a.rec === b.rec ? (a.open === b.open ? (a.id < b.id ? -1 : 1) : a.open > b.open ? -1 : 1) : a.rec > b.rec ? -1 : 1)).slice(0, 3);
   const top = topIds.map((x) => ({ customerId: x.id, name: safeName(names.get(x.id) ?? ""), receivedMinor: x.rec, shareOfReceiptsBps: bpsOf(x.rec, totalReceived), openMinor: x.open, shareOfOpenBps: bpsOf(x.open, receivables.totalMinor) }));
+  const enough = received.size >= MIN_CUSTOMERS_FOR_CONCENTRATION;
   const concentration: Concentration = {
-    top, receiptsMonths: months.length, receiptsReason: months.length === 0 || totalReceived === 0n ? "No customer receipts in a complete month yet." : null,
-    topShareOfReceiptsBps: totalReceived > 0n ? bpsOf(sum(top.map((x) => x.receivedMinor)), totalReceived) : null,
+    customersWithReceipts: received.size, top, receiptsMonths: months.length, receiptsReason: months.length === 0 || totalReceived === 0n ? "No customer receipts in a complete month yet." : !enough ? `Too few customers for a concentration figure (${received.size}; at least ${MIN_CUSTOMERS_FOR_CONCENTRATION} are needed).` : null,
+    topShareOfReceiptsBps: enough && totalReceived > 0n ? bpsOf(sum(top.map((x) => x.receivedMinor)), totalReceived) : null,
     topShareOfOpenBps: receivables.totalMinor > 0n ? bpsOf(sum(top.map((x) => x.openMinor)), receivables.totalMinor) : null,
   };
 

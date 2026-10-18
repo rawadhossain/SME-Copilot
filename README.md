@@ -30,7 +30,21 @@
 
 The AI never does arithmetic that matters and never decides what is allowed. It investigates and proposes; **code decides, the owner signs, a separate verifier checks**.
 
-## Run the demo (offline: no key, no network)
+## Run with Docker (one command)
+
+Prerequisite: Docker only (no Node, Bun or `.env` needed).
+
+```bash
+docker compose up --build
+```
+
+This builds the app, starts PostgreSQL and the app, migrates, seeds the synthetic company at its **pinned date (2026-10-15)**, creates the demo accounts and signs the demo mandate, then serves the offline demo (the real model's recorded answers, an empty key, no network). When the log says `Ready`, open http://localhost:3000 and sign in as **owner@mercer-vale.example / Ledger-Owner-2026**.
+
+- Another host port is a one-line override: `APP_PORT=3300 DB_PORT=55432 docker compose up --build` (defaults: `APP_PORT=3000`, `DB_PORT=5432`). If port 5432 is already in use or reserved on your machine, change `DB_PORT`; nothing inside the stack uses the host's 5432.
+- Restarting is safe: every setup step is idempotent (it prints "Already seeded", "exists", "already active") and the data stays in the `pgdata` volume. `docker compose down` keeps the data; `docker compose down -v` wipes it.
+- All keys in `docker-compose.yml` are the same **development-only** values as `.env.example` (a throwaway signing key pair for synthetic data).
+
+## Run the demo from source (offline: no key, no network)
 
 Prerequisites: Node.js 20+, [Bun](https://bun.sh) 1.3+, Docker (running).
 

@@ -34,7 +34,7 @@ const catalogueInfo = (r: MatchResult): CatalogueInfo => ({
 });
 
 /** `catalogue: false` leaves the synthetic lender catalogue out entirely (used by the check to prove nothing else changes). */
-export async function assessFunding(db: Db, businessId: string, opts: { catalogue?: boolean } = {}): Promise<FundingAssessment> {
+export async function assessFundingNoLog(db: Db, businessId: string, opts: { catalogue?: boolean } = {}): Promise<FundingAssessment> {
   const { ctx, events, agreed, limits, mandateValid } = await fundingBasis(db, businessId);
   const cur = ctx.currency;
   const m = (v: bigint) => formatMoney(money(v, cur), EXPONENTS[cur] ?? 2);
@@ -137,6 +137,16 @@ export async function assessFunding(db: Db, businessId: string, opts: { catalogu
   }
 
   const decision = decideFunding({ asOf: ctx.asOf, currency: cur, horizonWeeks: horizon, reserveMinor: ctx.input.reserve, baseline: comparison.doNotBorrow, alternatives, candidates, unavailable });
+  return { decision, basis: { includesAgreedTerms: agreed, savedOffers: saved.length, signedFundingLimits: mandateValid && (limits.costBps !== null || limits.amountMinor !== null), financeFeeBpsAssumed: financeFeeBps } };
+}
+
+/** The financing decision (no write): the same assessment, for read-only callers such as the Copilot. */
+export { assessFundingNoLog as assessFundingReadOnly };
+
+/** The financing decision, with one log record of what was assessed. */
+export async function assessFunding(db: Db, businessId: string, opts: { catalogue?: boolean } = {}): Promise<FundingAssessment> {
+  const result = await assessFundingNoLog(db, businessId, opts);
+  const decision = result.decision;
   await appendRecord(db, {
     businessId, event: ACTION_EVENTS.FUNDING_DECISION_MADE, actor: "agent",
     detail: {
@@ -145,7 +155,7 @@ export async function assessFunding(db: Db, businessId: string, opts: { catalogu
       alternatives: decision.alternatives.map((a) => ({ id: a.id, outcome: a.outcome })), decisionHash: sha256Hex(toJsonValue(decision)),
     },
   });
-  return { decision, basis: { includesAgreedTerms: agreed, savedOffers: saved.length, signedFundingLimits: mandateValid && (limits.costBps !== null || limits.amountMinor !== null), financeFeeBpsAssumed: financeFeeBps } };
+  return result;
 }
 
 /** The funding need exactly as assessFunding measures it: the same books, confirmed commitments and agreed terms, the same horizon and reserve, "do not borrow" as the baseline. */

@@ -59,7 +59,7 @@ export default function View() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="display text-2xl">Invoices & bills</h1>
+          <h1 className="display text-3xl">Invoices & bills</h1>
           <p className="text-sm text-ink-soft">Record what customers owe you and what you owe suppliers. The cash forecast, the shortage check and the assistant all use these records, as of {date(data.asOf)}.</p>
         </div>
         {isOwner && <Btn onClick={() => setAdding((a) => !a)}>{adding ? "Close" : `Add ${kind === "invoice" ? "an invoice" : "a bill"}`}</Btn>}

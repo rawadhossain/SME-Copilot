@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Message } from "@/ai";
 import { registerStructuredScript } from "@/ai/scripted";
 import type { Figure, HealthStatus, Severity } from "@/engine";
+import { ASK_SUGGESTED_QUESTIONS } from "@/lib/ask-suggestions";
 import { formatMoney, money } from "@/lib/money";
 
 export const CASH_ASK_PURPOSE = "cash.ask.v1";
@@ -149,7 +150,7 @@ function classifyIntent(question: string): { intent: AskIntent; lateDays: number
 
 const gbp = (cur: string, minor: string | bigint) => formatMoney(money(BigInt(minor), cur), 2);
 
-export const SUGGESTIONS = ["How long do my customers take to pay?", "What are my biggest financial warnings?", "Which invoices are overdue?","Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?"];
+export const SUGGESTIONS: string[] = [...ASK_SUGGESTED_QUESTIONS];
 
 /** The deterministic answer. Every figure is taken from `facts`. */
 export function ruleAnswer(intent: AskIntent, facts: AskFacts, lateDays: number | null = null, weekAsked: number | null = null): AskOutput {

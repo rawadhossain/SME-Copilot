@@ -145,7 +145,7 @@ export default function Funding() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="display text-3xl">Funding options</h1>
+        <h1 className="display text-3xl">Funding</h1>
         <p className="text-ink-soft">Type in the offers you have received. The system works out what each really costs and what it does to your cash, next to the choice of not borrowing at all. Nothing is sent to any lender and nothing is signed here.</p>
       </div>
 

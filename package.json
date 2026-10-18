@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "db:up": "docker compose up -d --wait",
+    "db:up": "docker compose up -d --wait db",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun --env-file=.env scripts/migrate.ts",
     "db:verify-chain": "bun --env-file=.env scripts/verify-chain.ts",
@@ -38,6 +38,9 @@
     "monitor": "bun --env-file=.env scripts/monitor.ts",
     "check:monitor": "bun --env-file=.env scripts/monitor-sanity.ts",
     "check:analysis": "bun --env-file=.env scripts/analysis-sanity.ts",
+    "check:attacks": "bun --env-file=.env scripts/attack-sanity.ts",
+    "copilot:live": "bun --env-file=.env scripts/copilot-live.ts",
+    "check:copilot": "bun --env-file=.env scripts/copilot-sanity.ts",
     "check:flight": "bun --env-file=.env scripts/flight-sanity.ts",
     "test:simulator": "bun --env-file=.env scripts/browser-simulator.ts",
     "demo:flight": "bun --env-file=.env scripts/demo-flight.ts",
@@ -48,7 +51,10 @@
     "mandate:funding": "bun --env-file=.env scripts/mandate-funding-limits.ts",
     "auth:seed": "bun --env-file=.env scripts/seed-accounts.ts",
     "e2e:smoke": "bun --env-file=.env scripts/e2e-smoke.ts",
-    "demo": "bun --env-file=.env scripts/demo-server.ts"
+    "demo": "bun --env-file=.env scripts/demo-server.ts",
+    "eval": "bun --env-file=.env scripts/eval-sanity.ts",
+    "check:all": "bun run check:money && bun run check:engine && bun run check:sandbox && bun run check:gate && bun run check:extract && bun run check:agent && bun run check:financing && bun run check:plan && bun run check:ledger && bun run check:funding-decision && bun run check:adapt && bun run check:rescue && bun run check:strategy && bun run check:recovery && bun run check:handoff && bun run check:matching && bun run check:monitor && bun run check:analysis && bun run check:attacks && bun run check:copilot && bun run check:flight && bun run check:insights && bun run check:eval",
+    "check:eval": "bun --env-file=.env scripts/eval-check.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.68",

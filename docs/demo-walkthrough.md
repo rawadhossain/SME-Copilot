@@ -28,4 +28,4 @@ Same as 1 but started by hand: `POST /api/business/{biz}/agent/runs` with `{trig
 
 ## 4. Offline and live
 
-Everything runs with the mock provider and recorded replays (`bun run check:plan`, `bun run check:agent`). The recorded live runs are in `fixtures/llm-recordings-live`; replay them with `LLM_MODE=replay` and an empty `LLM_API_KEY` (scripts `live-plan.ts`, `live-shortage.ts`).
+Everything runs with the mock provider and recorded replays (`bun run check:plan`, `bun run check:agent`). The recorded live runs are in `fixtures/llm-recordings-live`; replay them with `LLM_MODE=replay` and an empty `LLM_API_KEY` (script `live-shortage.ts`).
