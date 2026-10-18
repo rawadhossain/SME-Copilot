@@ -3,12 +3,13 @@
 // Financial flight simulator. Everything on this page is HYPOTHETICAL: the server recomputes the forecast and every strategy on a copy of the
 // books; the browser does no money arithmetic and nothing here can sign, send or run anything. Acting on a strategy means going to Plans and
 // using the normal shortage check and Review and sign.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Btn, Card, Chip, ErrorNote, Field, Loading, Stat, Th, inputClass, type Tone } from "@/ui/kit";
 import { Chart, type Series } from "@/ui/Chart";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
+import { scenarioSchema } from "@/domain/flight-scenario";
 
 type Ev = { key: number; kind: "customer_late" | "customer_short" | "supplier_refuses" | "unexpected_expense"; cp: string; days: string; pct: string; lever: string; amount: string; dueOn: string; label: string };
 let nextKey = 1;
@@ -49,6 +50,39 @@ export default function View() {
   const [error, setError] = useState<string | null>(null);
   const [hand, setHand] = useState<{ id: string; busy: boolean; review?: any; refused?: { reasons: string[]; fallback: string }; ack: boolean; error?: string; done?: { caseUrl: string; unchanged: boolean } } | null>(null);
 
+  const [note, setNote] = useState<string | null>(null);
+  const deepLinkDone = useRef(false);
+
+  // A link from the Copilot: ?scenario=<base64url JSON>. It is validated with the SAME schema the simulator's POST uses; an invalid or oversized one is
+  // ignored with a plain message. A valid one fills the form and runs once.
+  useEffect(() => {
+    if (!opts || !biz || deepLinkDone.current) return;
+    deepLinkDone.current = true;
+    const raw = new URLSearchParams(window.location.search).get("scenario");
+    if (!raw) return;
+    if (raw.length > 4000) { setNote("The scenario in that link was too large, so it was ignored."); return; }
+    try {
+      const bytes = Uint8Array.from(atob(raw.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+      const parsed = scenarioSchema.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
+      if (!parsed.success) { setNote("The scenario in that link was not valid, so it was ignored."); return; }
+      const sc = parsed.data;
+      setEvents(sc.shocks.map((x: any) => ev(x.kind === "customer_late" ? { kind: x.kind, cp: x.counterpartyId, days: String(x.days) }
+        : x.kind === "customer_short" ? { kind: x.kind, cp: x.counterpartyId, pct: String(x.shortBps / 100) }
+        : x.kind === "supplier_refuses" ? { kind: x.kind, cp: x.counterpartyId, lever: x.lever }
+        : { kind: x.kind, amount: x.amount, dueOn: x.dueOn, label: x.label })));
+      setName(sc.name ?? "Copilot scenario");
+      setNote("Scenario from the Copilot, run once. Change anything and run it again if you like.");
+      const sc2 = { name: sc.name ?? "Copilot scenario", shocks: sc.shocks };
+      void (async () => {
+        setBusy(true); setError(null);
+        const r = await call(`/api/business/${biz}/simulate`, { scenario: sc2 });
+        setBusy(false);
+        if (!r.ok) { setError(r.data?.error ?? "The simulation failed"); return; }
+        setRes(r.data); setLast(sc2);
+      })();
+    } catch { setNote("The scenario in that link could not be read, so it was ignored."); }
+  }, [opts, biz]);
+
   useEffect(() => {
     if (!biz) return;
     call(`/api/business/${biz}/simulate`).then((r) => { if (r.ok) setOpts(r.data); else setError(r.data?.error ?? "Could not load"); });
@@ -74,8 +108,12 @@ export default function View() {
     if (!biz || events.length === 0) return;
     const bad = events.map((e, i) => problem(e, i + 1)).find((p) => p);
     if (bad) { setError(bad); return; }
+    await execute({ name, shocks: events.map(toShock) });
+  }
+
+  async function execute(scenario: { name: string; shocks: any[] }) {
+    if (!biz) return;
     setBusy(true); setError(null);
-    const scenario = { name, shocks: events.map(toShock) };
     const body: any = { scenario };
     if (last && JSON.stringify(last.shocks) !== JSON.stringify(scenario.shocks)) body.compareWith = last;
     const r = await call(`/api/business/${biz}/simulate`, body);
@@ -115,7 +153,7 @@ export default function View() {
   return (
     <div className="space-y-5">
       <header>
-        <h1 className="display text-2xl">Financial flight simulator</h1>
+        <h1 className="display text-3xl">Simulator</h1>
         <p className="text-sm text-ink-soft">Try a crisis on a copy of your books before it happens. Nothing here is real: no payment, agreement or approval is created, and your books are not changed.</p>
       </header>
 
@@ -145,6 +183,7 @@ export default function View() {
             <Btn onClick={run} busy={busy}>{last ? "Run again with these assumptions" : "Run the simulation"}</Btn>
           </div>
         )}
+        {note && <p className="mt-3 text-sm" role="status">{note}</p>}
         {error && <div className="mt-3" aria-live="polite"><ErrorNote>{error}</ErrorNote></div>}
       </Card>
 

@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Chart } from "@/ui/Chart";
-import { Btn, Card, Chip, Empty, ErrorNote, Loading, Stat, Th } from "@/ui/kit";
+import { Btn, Card, Chip, Disclosure, Empty, ErrorNote, Loading, Stat, Th } from "@/ui/kit";
 import { date, money, week } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
-import { AskCash, CashPicture, weekWithDates } from "@/ui/rescue";
+import { CashHeadline, CauseDocuments, ForecastBasis, GapCauses, LedgerGlance, weekWithDates } from "@/ui/rescue";
+import { NextStep } from "@/ui/NextStep";
+import { Copilot } from "@/ui/Copilot";
 import { FinancialHealth } from "@/ui/insights";
 import { AlertsPanel } from "@/ui/alerts";
 import { BusinessAnalysis } from "@/ui/analysis";
@@ -65,8 +67,7 @@ export default function CashDesk() {
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <AlertsPanel />
-
+      {/* 1. The cash picture: where you stand, and where it is heading */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="In the bank today" value={money(room.balances.sandboxBankMinor, cur)} sub="practice bank, no real money" />
         <Stat label="Your safety cushion" value={money(room.reserveMinor, cur)} sub="you never want to dip below this" />
@@ -75,11 +76,29 @@ export default function CashDesk() {
 
       {running && <Card tone="accent" title={<span className="flex items-center gap-2">Your assistant is investigating <Chip tone="accent" pulse>running</Chip></span>}><p className="text-sm text-ink-soft" role="status">It is reading your books and searching for plans. Open Plans to watch it work.</p></Card>}
 
-      <CashPicture room={room} cur={cur} latestRunId={latest?.runId ?? null} busy={busy} onAsk={check} />
-      {biz && <FinancialHealth biz={biz} cur={cur} busy={busy} latestRunId={latest?.runId ?? null} onPlanSearch={check} />}
+      <CashHeadline room={room} cur={cur} latestRunId={latest?.runId ?? null} busy={busy} onAsk={check} />
 
-      <BusinessAnalysis />
-      {biz && <AskCash biz={biz} />}
+      <Card title="Your cash, week by week" subtitle={room.agreed ? "With the terms you have agreed (solid), against doing nothing (orange dashed) and without the new orders (grey dashed)." : room.commitments.length ? "With your confirmed orders and quotes (solid) and without them (dashed)." : "Your books only. No orders or quotes have been confirmed yet."}>
+        <Chart currency={cur} reserveMinor={room.reserveMinor} series={[
+          ...(room.commitments.length ? [{ key: "books", label: "Without the new orders and quotes", weeks: room.booksOnly.weeks, color: "#8b958f", dashed: true }] : []),
+          ...(room.agreed ? [{ key: "nothing", label: "If you had done nothing", weeks: doNothing.weeks, color: "#b45309", dashed: true, firstNegativeWeek: doNothing.firstNegativeWeek }] : []),
+          ...(room.downside ? [{ key: "late", label: `If customers pay ${room.downside.days} days late`, weeks: room.downside.weeks, color: "#7c3aed", dashed: true, firstNegativeWeek: room.downside.firstNegativeWeek }] : []),
+          { key: "with", label: room.agreed ? "With your agreed plan" : room.commitments.length ? "With confirmed orders and quotes" : "Your books", weeks: f.weeks, color: "#0d5a50", firstNegativeWeek: neg },
+        ]} />
+      </Card>
+
+      {/* 2. What needs attention now */}
+      <AlertsPanel />
+
+      {/* 3. Ask */}
+      {biz && (
+        <Card title="Ask Copilot">
+          <Copilot />
+        </Card>
+      )}
+
+      {/* 4. The next step, only when it adds something beyond the alerts */}
+      <NextStep />
 
       {room.commitments.length === 0 && cases.length === 0 && (
         <Card title="How Ledgerhand works" subtitle="Four steps. You stay in charge of every one that matters.">
@@ -94,31 +113,16 @@ export default function CashDesk() {
         </Card>
       )}
 
-      <Card title="What if customers pay late?" subtitle="Customers often pay later than their terms. See how much that would hurt."
-        right={<label className="flex items-center gap-2 text-sm"><span className="text-ink-soft">Customers pay</span>
-          <select aria-label="How late customers pay" className="rounded-lg border border-line-strong bg-white px-2 py-1.5 text-sm" value={late} onChange={(e) => setLate(Number(e.target.value))}>
-            <option value={0}>on time</option>{[7, 14, 21, 30].map((d) => <option key={d} value={d}>{d} days late</option>)}
-          </select></label>}>
-        {!room.downside ? <p className="text-sm text-ink-soft">Pick a delay to add a line to the chart below and see your lowest point.</p> : (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Lowest point" value={money(room.downside.minBalanceMinor, cur)} sub={`${week(room.downside.minBalanceWeek)} · ${money((BigInt(room.downside.minBalanceMinor) - BigInt(f.minBalanceMinor)).toString(), cur, { signed: true })} against on time`} tone={BigInt(room.downside.minBalanceMinor) < 0n ? "danger" : BigInt(room.downside.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
-            <Stat label="First below zero" value={week(room.downside.firstNegativeWeek)} tone={room.downside.firstNegativeWeek ? "danger" : "good"} />
-            <Stat label="Weeks below zero" value={room.downside.weeksBelowZero} tone={room.downside.weeksBelowZero ? "danger" : "good"} />
-            <Stat label="Closing balance" value={money(room.downside.closingMinor, cur)} />
-          </div>
-        )}
-      </Card>
-
-      <Card title="Your cash, week by week" subtitle={room.agreed ? "With the terms you have agreed (solid), against doing nothing (orange dashed) and without the new orders (grey dashed)." : room.commitments.length ? "With your confirmed orders and quotes (solid) and without them (dashed)." : "Your books only. No orders or quotes have been confirmed yet."}>
-        <Chart currency={cur} reserveMinor={room.reserveMinor} series={[
-          ...(room.commitments.length ? [{ key: "books", label: "Without the new orders and quotes", weeks: room.booksOnly.weeks, color: "#8b958f", dashed: true }] : []),
-          ...(room.agreed ? [{ key: "nothing", label: "If you had done nothing", weeks: doNothing.weeks, color: "#b45309", dashed: true, firstNegativeWeek: doNothing.firstNegativeWeek }] : []),
-          ...(room.downside ? [{ key: "late", label: `If customers pay ${room.downside.days} days late`, weeks: room.downside.weeks, color: "#7c3aed", dashed: true, firstNegativeWeek: room.downside.firstNegativeWeek }] : []),
-          { key: "with", label: room.agreed ? "With your agreed plan" : room.commitments.length ? "With confirmed orders and quotes" : "Your books", weeks: f.weeks, color: "#0d5a50", firstNegativeWeek: neg },
-        ]} />
-      </Card>
-
-      <Card title="Orders and quotes you have confirmed" subtitle="Each one is already counted in the forecast above."
+      {/* 5. Details: everything behind the picture, one line each until opened */}
+      <section aria-labelledby="today-details" className="space-y-3">
+        <h2 id="today-details" className="display text-lg text-ink-soft">Details</h2>
+        {biz && <FinancialHealth biz={biz} cur={cur} busy={busy} latestRunId={latest?.runId ?? null} onPlanSearch={check} />}
+        <BusinessAnalysis />
+        <GapCauses room={room} cur={cur} />
+        <ForecastBasis room={room} cur={cur} />
+        <CauseDocuments room={room} cur={cur} />
+        <LedgerGlance room={room} cur={cur} />
+        <Disclosure title="Orders and quotes you have confirmed" takeaway={room.commitments.length === 0 ? "Nothing to plan around yet" : `${room.commitments.length} counted in the forecast`} subtitle="Each one is already counted in the forecast above."
         right={<Btn variant="secondary" href="/room/commitments">Add an order or quote</Btn>}>
         {room.commitments.length === 0 ? (
           <Empty title="Nothing to plan around yet" action={<Btn href="/room/commitments">Upload a purchase order or quote</Btn>}>Your assistant starts when a new order or quote is confirmed, or when the forecast shows a shortage.</Empty>
@@ -133,7 +137,22 @@ export default function CashDesk() {
             </tbody>
           </table></div>
         )}
-      </Card>
+      </Disclosure>
+        <Disclosure title="What if customers pay late?" takeaway={room.downside ? `If customers pay ${room.downside.days} days late, your lowest point is ${money(room.downside.minBalanceMinor, cur)}` : "See how much a late payer would hurt"} subtitle="Customers often pay later than their terms. See how much that would hurt."
+        right={<label className="flex items-center gap-2 text-sm"><span className="text-ink-soft">Customers pay</span>
+          <select aria-label="How late customers pay" className="rounded-lg border border-line-strong bg-white px-2 py-1.5 text-sm" value={late} onChange={(e) => setLate(Number(e.target.value))}>
+            <option value={0}>on time</option>{[7, 14, 21, 30].map((d) => <option key={d} value={d}>{d} days late</option>)}
+          </select></label>}>
+        {!room.downside ? <p className="text-sm text-ink-soft">Pick a delay to add a line to the chart above and see your lowest point.</p> : (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Lowest point" value={money(room.downside.minBalanceMinor, cur)} sub={`${week(room.downside.minBalanceWeek)} · ${money((BigInt(room.downside.minBalanceMinor) - BigInt(f.minBalanceMinor)).toString(), cur, { signed: true })} against on time`} tone={BigInt(room.downside.minBalanceMinor) < 0n ? "danger" : BigInt(room.downside.minBalanceMinor) < BigInt(room.reserveMinor) ? "caution" : "good"} />
+            <Stat label="First below zero" value={week(room.downside.firstNegativeWeek)} tone={room.downside.firstNegativeWeek ? "danger" : "good"} />
+            <Stat label="Weeks below zero" value={room.downside.weeksBelowZero} tone={room.downside.weeksBelowZero ? "danger" : "good"} />
+            <Stat label="Closing balance" value={money(room.downside.closingMinor, cur)} />
+          </div>
+        )}
+      </Disclosure>
+      </section>
     </div>
   );
 }

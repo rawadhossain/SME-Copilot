@@ -78,6 +78,11 @@ function partA() {
   const conc = mc.concentration;
   assert.equal(conc.top[0].customerId, "c1");
   assert.equal(conc.top[0].shareOfReceiptsBps, 6896, "c1 received 2,000,000 of 2,900,000 in complete months");
+  assert.equal(conc.topShareOfReceiptsBps, null, "two customers are too few for a concentration figure");
+  assert.ok(/Too few customers/.test(conc.receiptsReason!) && !mc.observations.some((o) => /top d+ customers?/.test(o)), "and no concentration sentence is written");
+  const four = analyse(base({ transactions: [tx("2026-07-01", 1n, "Opening", null), ...["c1", "c2", "c3", "c4"].map((c, i) => tx(`2026-08-0${i + 1}`, BigInt((i + 1) * 100_000), "Payment from customer", "customer", c)), tx("2026-09-02", -50_000n, "Supplier payment", "supplier")] }));
+  assert.equal(four.concentration.topShareOfReceiptsBps, 9000, "4 customers: the top 3 (400,000 + 300,000 + 200,000) are 900,000 of 1,000,000");
+  assert.ok(four.observations.some((o) => /top 3 customers made up 90%/.test(o)));
 
   // A5. No data at all: every state says what is missing, nothing is NaN or infinite, and the same input gives the same output.
   const empty = analyse(base({ openingBalanceMinor: 0n }));

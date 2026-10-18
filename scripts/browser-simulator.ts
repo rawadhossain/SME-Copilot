@@ -160,7 +160,7 @@ async function main() {
       await page.goto(`${BASE}/room`);
       await page.waitFor(`[...document.querySelectorAll('nav a')].some(a=>a.innerText.trim()==='Simulator')`, "the Simulator entry in the navigation");
       await page.click("Simulator", 0, "nav a");
-      await page.waitText("Financial flight simulator");
+      await page.waitText("Try a crisis on a copy of your books");
       assert.ok((await page.text()).includes("Nothing here is real"), "the page opens with the 'nothing is real' statement");
       await shot(page, "sim-1-start");
 
@@ -237,7 +237,7 @@ async function main() {
       assert.equal(await authCount(), 0, "opening the review created no authorisation");
       await q0.end();
       await page.goto(`${BASE}/room/simulator`);
-      await page.waitText("Financial flight simulator");
+      await page.waitText("Try a crisis on a copy of your books");
       await page.click("Combined crisis", 0, "button");
       await page.waitText("Scenario name");
       await page.click("Run the simulation", 0, "button");

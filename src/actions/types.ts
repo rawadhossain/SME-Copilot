@@ -75,6 +75,7 @@ export const ACTION_EVENTS = {
   ALERT_ACKNOWLEDGED: "alert.acknowledged",
   MONITOR_RUN: "monitor.run",
   MONITOR_FAILED: "monitor.failed",
+  COPILOT_ASKED: "copilot.asked",
   LEDGER_DOCUMENT_CREATED: "ledger.document_created",
   LEDGER_DOCUMENT_UPDATED: "ledger.document_updated",
   LEDGER_DOCUMENT_VOIDED: "ledger.document_voided",

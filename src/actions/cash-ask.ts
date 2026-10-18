@@ -163,3 +163,14 @@ export async function askAboutCash(db: Db, businessId: string, input: unknown, o
   });
   return { ok: true, source, modelRefused: fellBack, modelNote, draftAnswer: draft.answer, intent, answer: out.answer, unsupported: out.unsupported, details: detailLines(intent, facts, lateDays), evidence: facts.evidence, suggestions: ASK_SUGGESTIONS };
 }
+
+/**
+ * The rule-based answer to a cash question, without the model reword, the rate limit or a log record: the same classification, the same facts and the
+ * same `ruleAnswer` as askAboutCash. For read-only callers (the Copilot logs its own record).
+ */
+export async function ruleBasedAsk(db: Db, businessId: string, question: string) {
+  const { intent, lateDays, weekAsked, topic, analysisTopic } = classifyQuestion(question);
+  const facts = await gatherFacts(db, businessId, intent === "late" ? lateDays : null, intent === "ledger", intent === "insights" ? { topic } : null, intent === "analysis" ? analysisTopic : null);
+  const draft = ruleAnswer(intent, facts, lateDays, weekAsked);
+  return { intent, answer: draft.answer, unsupported: draft.unsupported, details: detailLines(intent, facts, lateDays), evidence: facts.evidence };
+}

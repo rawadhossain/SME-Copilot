@@ -4,10 +4,11 @@
 // Presentational only. Every figure arrives from the engine through /api/business/[id]/room; nothing is calculated or worded by a model here.
 import Link from "next/link";
 import { useState } from "react";
-import { Btn, Card, Chip, ErrorNote, Th, inputClass } from "./kit";
+import { Btn, Card, Chip, Disclosure, ErrorNote, Th, inputClass } from "./kit";
 import { call } from "./session";
 import { date, money, week } from "./format";
 import { outcomeVerdict } from "./outcome";
+import { ASK_SUGGESTED_QUESTIONS } from "@/lib/ask-suggestions";
 
 const KIND_LABEL: Record<string, [string, string]> = {
   actual: ["In the bank", "A real balance."],
@@ -26,16 +27,21 @@ export function weekWithDates(weeks: any[] | undefined, n: number | null | undef
   return w ? `${week(n)} (${date(w.start)} to ${date(w.end)})` : week(n);
 }
 
-export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any; cur: string; latestRunId: string | null; busy: boolean; onAsk: () => void }) {
+function pictureOf(room: any) {
   const f = room.agreed ?? room.forecast;
   const sh = room.shortage;
   const reason = sh.reason;
   const below0 = reason?.kind === "below_zero";
-  const tone = sh.shortage ? (below0 ? "danger" : "caution") : "good";
+  const tone: "danger" | "caution" | "good" = sh.shortage ? (below0 ? "danger" : "caution") : "good";
   const drivers: any[] = room.drivers ?? [];
   const when = weekWithDates(f.weeks, reason?.minBalanceWeek ?? f.minBalanceWeek);
+  return { f, sh, reason, below0, tone, drivers, when };
+}
+
+/** The verdict: are you heading for a shortage, in one card. */
+export function CashHeadline({ room, cur, latestRunId, busy, onAsk }: { room: any; cur: string; latestRunId: string | null; busy: boolean; onAsk: () => void }) {
+  const { f, sh, reason, below0, tone, when } = pictureOf(room);
   return (
-    <div className="space-y-6">
       <Card tone={tone} title={
         <span className="flex flex-wrap items-center gap-2" role="status">
           {sh.shortage ? (below0 ? "You are heading for a cash shortage" : "You are heading below your safety cushion") : `No shortage in the next ${room.horizonWeeks} weeks`}
@@ -55,9 +61,16 @@ export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any
           <p className="text-sm text-ink-soft">Your projected balance stays above your safety cushion. Lowest point: <b className="num">{money(f.minBalanceMinor, cur)}</b> in {when}. {room.commitments.length === 0 ? "Add a purchase order or a supplier quote and the check runs again." : ""}</p>
         )}
       </Card>
+  );
+}
 
+/** The causes of the gap (only when there is one), as a disclosure. */
+export function GapCauses({ room, cur }: { room: any; cur: string }) {
+  const { sh, drivers } = pictureOf(room);
+  return (
+    <>
       {sh.shortage && (
-        <Card title="Why this is happening" subtitle="Each cause taken out on its own: how much higher your lowest point would be without it. Causes can overlap, so they need not add up.">
+        <Disclosure title="Why this is happening" takeaway={drivers[0] ? `Biggest cause: ${drivers[0].label}` : "No single cause stands out"} subtitle="Each cause taken out on its own: how much higher your lowest point would be without it. Causes can overlap, so they need not add up.">
           {drivers.length === 0 ? <p className="text-sm text-ink-soft">{(room.causeDocuments ?? []).length > 0 ? "No single order or late payer explains it. The gap comes from the invoices and bills listed below." : "No single cause stands out. The gap comes from the balance of all payments in and out."}</p> : (
             <ul className="divide-y divide-line text-sm">
               {drivers.map((d: any) => (
@@ -76,11 +89,19 @@ export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any
               ))}
             </ul>
           )}
-        </Card>
+        </Disclosure>
       )}
+    </>
+  );
+}
 
+/** The biggest invoices and bills counted before the lowest point (only when there is a gap), as a disclosure. */
+export function CauseDocuments({ room, cur }: { room: any; cur: string }) {
+  const { sh } = pictureOf(room);
+  return (
+    <>
       {sh.shortage && (room.causeDocuments ?? []).length > 0 && (
-        <Card title="Invoices and bills behind this" subtitle={`The biggest invoices and bills counted before your lowest point. Open one to see its payments, or to record a payment you have already received or made.`}>
+        <Disclosure title="Invoices and bills behind this" takeaway={`${room.causeDocuments.length} item${room.causeDocuments.length === 1 ? "" : "s"} counted before your lowest point`} subtitle={`The biggest invoices and bills counted before your lowest point. Open one to see its payments, or to record a payment you have already received or made.`}>
           <ul className="divide-y divide-line text-sm">
             {room.causeDocuments.map((it: any) => (
               <li key={it.document.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1.5">
@@ -89,30 +110,38 @@ export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any
               </li>
             ))}
           </ul>
-        </Card>
+        </Disclosure>
       )}
+    </>
+  );
+}
 
+export function CashPicture({ room, cur, latestRunId, busy, onAsk }: { room: any; cur: string; latestRunId: string | null; busy: boolean; onAsk: () => void }) {
+  return (
+    <div className="space-y-6">
+      <CashHeadline room={room} cur={cur} latestRunId={latestRunId} busy={busy} onAsk={onAsk} />
+      <GapCauses room={room} cur={cur} />
+      <CauseDocuments room={room} cur={cur} />
       <LedgerGlance room={room} cur={cur} />
-
       <ForecastBasis room={room} cur={cur} />
     </div>
   );
 }
 
 /** Overdue invoices and bills due soon, with a link to the full list. */
-function LedgerGlance({ room, cur }: { room: any; cur: string }) {
+export function LedgerGlance({ room, cur }: { room: any; cur: string }) {
   const g = room.ledger;
   if (!g) return null;
   const empty = g.openInvoiceCount === 0 && g.billsDueSoonCount === 0;
   return (
-    <Card title="Invoices and bills" subtitle="What customers still owe you and what you owe suppliers. The forecast uses these records." right={<Btn variant="secondary" href="/room/invoices">Open invoices & bills</Btn>}>
+    <Disclosure title="Invoices and bills" takeaway={empty ? "Nothing unpaid and nothing due soon" : `${money(g.openInvoiceMinor, cur)} owed to you${g.overdueCount > 0 ? `, ${g.overdueCount} overdue` : ""}; ${money(g.billsDueSoonMinor, cur)} in bills due soon`} subtitle="What customers still owe you and what you owe suppliers. The forecast uses these records." right={<Btn variant="secondary" href="/room/invoices">Open invoices & bills</Btn>}>
       {empty ? <p className="text-sm text-ink-soft">No unpaid invoices and no bills due in the next two weeks.</p> : (
         <ul className="space-y-1 text-sm">
           <li><b className="num">{money(g.openInvoiceMinor, cur)}</b> owed to you across {g.openInvoiceCount} invoice{g.openInvoiceCount === 1 ? "" : "s"}{g.overdueCount > 0 && <>, of which <b className="num text-danger">{money(g.overdueMinor, cur)}</b> is overdue ({g.overdueCount})</>}.</li>
           <li><b className="num">{money(g.billsDueSoonMinor, cur)}</b> in {g.billsDueSoonCount} bill{g.billsDueSoonCount === 1 ? "" : "s"} due within two weeks.</li>
         </ul>
       )}
-    </Card>
+    </Disclosure>
   );
 }
 
@@ -126,8 +155,8 @@ export function ForecastBasis({ room, cur }: { room: any; cur: string }) {
   const rows: any[] = basis.rows.filter((r: any) => r.count > 0);
   const summary = rows.map((r) => `${r.count} ${KIND_LABEL[r.kind][0].toLowerCase()}`).join(", ");
   return (
-    <Card title="How sure is this forecast?" subtitle={`Up to the lowest point (${week(basis.throughWeek)}) it counts ${summary} item${rows.reduce((n, r) => n + r.count, 0) === 1 ? "" : "s"}. It is a forecast, not a promise.`}
-      right={gaps.length === 0 ? <Chip tone="good">nothing missing</Chip> : <Chip tone="caution">{gaps.length} to check</Chip>}>
+    <Disclosure title="How sure is this forecast?" takeaway={gaps.length === 0 ? "Nothing is missing" : `${gaps.length} thing${gaps.length === 1 ? "" : "s"} to check`} subtitle={`Up to the lowest point (${week(basis.throughWeek)}) it counts ${summary} item${rows.reduce((n, r) => n + r.count, 0) === 1 ? "" : "s"}. It is a forecast, not a promise.`}
+      chip={gaps.length === 0 ? <Chip tone="good">nothing missing</Chip> : <Chip tone="caution">{gaps.length} to check</Chip>}>
       {(gaps.length > 0 || notes.length > 0) && <ul className="space-y-1 text-sm">{[...gaps, ...notes].map((g) => <li key={g} className="flex gap-2"><span aria-hidden>▲</span><span>{g}</span></li>)}</ul>}
       <details className="mt-3">
         <summary className="cursor-pointer text-sm text-accent">See what it is built from</summary>
@@ -159,7 +188,7 @@ export function ForecastBasis({ room, cur }: { room: any; cur: string }) {
           </>
         )}
       </details>
-    </Card>
+    </Disclosure>
   );
 }
 
@@ -207,7 +236,7 @@ export function OutcomeSummary({ auth, reason, doNothing, agreed, reserveMinor, 
 
 // ---------------------------------------------------------------- "Ask about my cash"
 
-const SUGGESTED = ["Why am I running short of cash?", "What happens if my customer pays two weeks late?", "Why is the first plan better than the others?", "Can I avoid borrowing?", "What happens if the supplier rejects this offer?", "What are my biggest financial warnings?", "Are my overdue invoices getting worse?"];
+const SUGGESTED = ASK_SUGGESTED_QUESTIONS;
 
 /** A small contextual assistant. It reads facts computed by the engine and cannot sign, approve, pay or send: those only happen through Review and sign. */
 export function AskCash({ biz }: { biz: string }) {

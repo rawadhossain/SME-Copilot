@@ -84,7 +84,7 @@ function Case() {
   if (!rootId || !run) {
     return (
       <div className="space-y-4">
-        <h1 className="display text-3xl">Decisions</h1>
+        <h1 className="display text-3xl">Plans</h1>
         <Empty title="Nothing to decide right now" action={<div className="flex justify-center gap-2"><Btn busy={!!busy} onClick={() => act("check", `/api/business/${biz}/shortage-check`)}>Check for a shortage now</Btn><Btn variant="secondary" href="/room/commitments">Add a document</Btn></div>}>
           A case opens when the forecast shows a shortage: after you confirm a commitment, or when you ask for a check. Your assistant then investigates and proposes plans. It cannot act on its own.
         </Empty>
@@ -129,7 +129,8 @@ function Case() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="display text-3xl">{run.trigger?.origin === "simulation" ? "Plan: prepare for a simulated crisis" : "Plan: fix the cash gap"}</h1>
+          <h1 className="display text-3xl">Plans</h1>
+          <h2 className="display mt-1 text-xl text-ink-soft">{run.trigger?.origin === "simulation" ? "Prepare for a simulated crisis" : "Fix the cash gap"}</h2>
           <p className="text-ink-soft">{run.trigger?.origin === "simulation" ? <>You asked to prepare for a scenario from the simulator. It has not happened. On today&apos;s real books, doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing?.minBalanceMinor, cur)}</b> in {week(run.doNothing?.minBalanceWeek)}.</> : reason ? <>The forecast showed {reason.kind === "below_zero" ? "you running out of cash" : "you dropping below your reserve"}: lowest <b className="num">{money(reason.minBalanceMinor, cur)}</b> in {week(reason.minBalanceWeek)}{reason.firstNegativeWeek ? `, below zero from ${week(reason.firstNegativeWeek)}` : ""}.</> : run.doNothing ? <>A new order or quote started this case. Doing nothing would leave your lowest balance at <b className="num">{money(run.doNothing.minBalanceMinor, cur)}</b> in {week(run.doNothing.minBalanceWeek)}.</> : "A new order or quote started this case."}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">

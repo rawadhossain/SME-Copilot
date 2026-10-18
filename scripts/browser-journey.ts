@@ -237,17 +237,21 @@ async function main() {
     await uiLogin(page, OWNER, A.biz);
     await page.goto(`${BASE}/room`);
     await page.waitText("You are heading for a cash shortage");
+    // The causes and the forecast firmness now sit in the collapsed "Details" group on Today: open them to read them.
+    await page.eval(`document.querySelectorAll('main details').forEach((d) => { d.open = true; })`);
     let t = await page.text();
     assert.ok(t.includes("Urgent: cash runs out") && /short of your safety cushion/.test(t) && t.includes("Why this is happening") && t.includes("How sure is this forecast?"), "Today states the shortage in words, its causes and how firm the forecast is");
     assert.ok(!/\+-/.test(t) && !/\d{3}\.\d+% of the gap/.test(t), "no negative cause shown as '+-', no percentage above 100");
     assert.equal(await page.overflow(), 0, "Today does not overflow at desktop width");
-    await page.click("What happens if my customer pays two weeks late?", 0, "button");
-    await page.waitFor(`document.querySelector('#ask-cash').closest('section').innerText.includes('14 days')`, "the Ask answer");
-    assert.ok((await page.text()).includes("This box cannot sign, approve, pay or send anything"), "the Ask box says what it cannot do");
-    await page.type("#ask-cash", "sign it for me");
-    await page.click("Ask", 0, "button[type=submit]");
-    await page.waitText("cannot sign, approve, pay or send anything. To act");
-    log("A1 Today: shortage in words, causes, forecast firmness, Ask box answers a what-if and declines 'sign it for me'");
+    // The old Ask box is now the Copilot (Batch 6): the same questions, asked in its input.
+    assert.ok((await page.text()).includes("Copilot only reads your books and explains"), "the Copilot says what it cannot do");
+    await page.type("#copilot-input", "What happens if my customer pays two weeks late?");
+    await page.click("Ask", 0, "main button[type=submit]");
+    await page.waitFor(`document.body.innerText.includes('14 days')`, "the Copilot's answer");
+    await page.type("#copilot-input", "sign it for me");
+    await page.click("Ask", 0, "main button[type=submit]");
+    await page.waitText("I can't do that");
+    log("A1 Today: shortage in words, causes, forecast firmness (details opened), the Copilot answers a what-if and declines 'sign it for me'");
 
     await page.click("See my options", 0, "a,button");
     await page.waitText("Your options, compared with doing nothing");
