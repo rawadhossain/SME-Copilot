@@ -19,6 +19,7 @@ import { mandateHashOf, messageOf } from "./plan-authority";
 import { describeTerms } from "./plan-describe";
 import { buildTerms, leversHashOf, termsHashOf, tolerancesSchema, type PlanTerms } from "./plan-terms";
 import { isExpired } from "./propose";
+import { loadPlaybook } from "./playbook";
 import { loadGateState, loadSignedMandate, worldDate } from "./state";
 import { ACTION_EVENTS, ActionError, type Db, type Q } from "./types";
 
@@ -90,6 +91,11 @@ export async function proposeAuthorisation(db: Db, businessId: string, input: un
       if (needsSecond && confirmations !== 2 && !opts.preview) {
         throw new ActionError("refused", "This plan schedules supplier payments above the mandate second-confirmation threshold; sign it with confirmations: 2");
       }
+    }
+    // Playbook "always ask a second approver": can only ADD the second step, never lower the signed threshold.
+    if (!needsSecond && (await loadPlaybook(db, businessId)).alwaysSecondApprover) {
+      needsSecond = true;
+      if (confirmations !== 2 && !opts.preview) throw new ActionError("refused", "Your playbook asks for a second approver on every plan; sign it with confirmations: 2");
     }
   } catch (e) {
     throw new ActionError("refused", e instanceof Error ? e.message : "The plan cannot be turned into requests");

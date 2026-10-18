@@ -69,6 +69,7 @@ export const ACTION_EVENTS = {
   FUNDING_DECISION_MADE: "funding.decision_made",
   FUNDING_MATCHED: "funding.matched",
   FUNDING_PROFILE_DECLARED: "funding.profile_declared",
+  PLAYBOOK_UPDATED: "playbook.updated",
   ALERT_RAISED: "alert.raised",
   ALERT_ESCALATED: "alert.escalated",
   ALERT_RESOLVED: "alert.resolved",

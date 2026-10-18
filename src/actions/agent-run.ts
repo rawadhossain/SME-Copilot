@@ -28,6 +28,8 @@ import { getExtractionById } from "@/ingest/documents/store";
 import type { ExtractionResult } from "@/ingest/documents/validate";
 import { toJsonValue } from "@/sandbox/proposals";
 import { loadKnownConstraints } from "./negotiation-memory";
+import { loadPlaybook } from "./playbook";
+import { leversOff } from "@/domain/playbook";
 
 export const triggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("commitment"), extractionId: z.string().uuid() }),
@@ -102,6 +104,7 @@ export async function buildContext(db: Db, businessId: string, mustInclude: stri
   const events = pending.map((p) => p.event);
   // Funding offers the owner saved (validated again on the way in; a row that no longer validates is left out).
   const offerRows = await db.select({ offer: fundingOffers.offer }).from(fundingOffers).where(and(eq(fundingOffers.businessId, businessId), isNull(fundingOffers.archivedAt))).orderBy(asc(fundingOffers.createdAt), asc(fundingOffers.label));
+  const playbookOff = leversOff(await loadPlaybook(db, businessId));
   const savedOffers = offerRows.flatMap((r) => { const p = financingOfferSchema.safeParse(r.offer); return p.success ? [p.data] : []; });
   const seen = new Set<string>();
   collectNumbers(pending.map((p) => ({ amountMinor: p.event.amountMinor.toString(), date: p.event.date })), seen);
@@ -109,6 +112,7 @@ export async function buildContext(db: Db, businessId: string, mustInclude: stri
     businessId, asOf: input.asOf, currency: input.currency, horizonWeeks: PLANNING_HORIZON_WEEKS, input, pending,
     counterparties: cps, parties: resolveParties(events, cps), mandate: await loadSignedMandate(db, businessId), gateState: await loadGateState(db, businessId),
     constraints, financeFeeBps: assumedFeeBps(constraints, FINANCE_FEE_BPS_ASSUMPTION), shortage: null,
+    ...(playbookOff.length > 0 ? { playbookOff } : {}),
     ...(savedOffers.length > 0 ? { fundingOffers: savedOffers } : {}),
     seen, notes: [], submitted: null,
   };

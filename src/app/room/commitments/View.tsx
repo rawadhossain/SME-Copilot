@@ -75,7 +75,7 @@ export default function Commitments() {
     if (!r.ok) { setMsg({ tone: "danger", text: r.data.error ?? "Refused" }); return; }
     if (what === "confirm") {
       const s = r.data.shortage;
-      setMsg({ tone: "good", text: s?.status === "planned" ? "Confirmed and logged. The forecast now shows a shortage and your assistant has proposed plans." : s?.status === "existing_run" ? "Confirmed and logged. Your assistant already has plans for this shortage." : "Confirmed and logged. The forecast has been updated." });
+      setMsg({ tone: "good", text: s?.status === "planned" ? "Confirmed and logged. The forecast now shows a shortage and your assistant has proposed plans." : s?.status === "existing_run" ? "Confirmed and logged. Your assistant already has plans for this shortage." : s?.status === "auto_prepare_off" ? "Confirmed and logged. Your playbook is set to not prepare plans automatically; ask for a shortage check when you want them." : "Confirmed and logged. The forecast has been updated." });
     } else setMsg({ tone: "neutral", text: "Rejected and logged. Nothing from this document is used." });
     await load();
     await openDoc(id);

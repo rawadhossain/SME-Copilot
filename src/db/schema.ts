@@ -717,3 +717,13 @@ export const alerts = pgTable(
     check("alerts_status_chk", sql`${t.status} in ('open', 'acknowledged', 'resolved')`),
   ],
 );
+
+// Owner playbook (Batch 12): per-business settings that can only NARROW what the assistant may do or ADD a human step. One row per business;
+// the app role may insert it and change the settings columns. The gate never reads this table (ESLint-enforced).
+export const playbookSettings = pgTable("playbook_settings", {
+  businessId: uuid("business_id").primaryKey().references(() => businesses.id),
+  settings: jsonb("settings").notNull(),
+  version: integer("version").notNull().default(1),
+  updatedBy: text("updated_by").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -42,7 +42,7 @@ export function mandateOf(ctx: AgentToolContext): { ok: true; mandate: Mandate }
 export function leverBounds(ctx: AgentToolContext) {
   const m = mandateOf(ctx);
   const orig = originalDepositBps(baseEventsOf(ctx));
-  const allowed = (kind: Lever["kind"]) => m.ok && (m.mandate.limits.allowedProposalKinds as string[]).includes(KIND_TO_PROPOSAL[kind]);
+  const allowed = (kind: Lever["kind"]) => m.ok && !(ctx.playbookOff ?? []).includes(kind) && (m.mandate.limits.allowedProposalKinds as string[]).includes(KIND_TO_PROPOSAL[kind]);
   // Constraints learned from counterparty replies (ADR-021) narrow the bounds; a refused lever is unavailable.
   const cs = ctx.constraints;
   const refused = (kind: Lever["kind"], cpId: string | null) => cs.some((c) => c.kind === kind && c.counterpartyId === cpId && c.excluded) || (ctx.unavailable ?? []).some((u) => u.kind === kind && u.counterpartyId === cpId);

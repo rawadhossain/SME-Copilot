@@ -88,6 +88,13 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // The gate decides from the signed mandate only. The owner playbook narrows planning and adds human steps elsewhere; the gate must never read it.
+  {
+    files: ["src/gate/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [{ group: ["**/playbook", "**/domain/playbook", "**/actions/playbook"], message: "The gate must not read or import the owner playbook." }] }],
+    },
+  },
   // The decision-room screens load their data from the API inside effects (the numbers must come from the API, not from server props).
   {
     files: ["src/ui/**/*.{ts,tsx}", "src/app/room/**/*.{ts,tsx}", "src/app/login/**/*.{ts,tsx}"],
