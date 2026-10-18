@@ -1,3 +1,9 @@
+# `docker compose up --build` starts the database and the app in the OFFLINE demo mode: recorded model answers, empty key, no network,
+# the synthetic company seeded at its pinned date (2026-10-15). Open http://localhost:3000 and sign in (see README).
+# Host ports: DB_PORT (default 5432) and APP_PORT (default 3000), e.g.  APP_PORT=3300 DB_PORT=55432 docker compose up --build
+#
+# EVERY value below is a DEVELOPMENT value for synthetic data (the same ones as .env.example). The signing key pair is a throwaway dev key:
+# anyone with this file can sign as the demo owner. Never reuse any of it for anything real.
 services:
   db:
     image: postgres:17
@@ -6,7 +12,8 @@ services:
       POSTGRES_PASSWORD: sme # local dev only, synthetic data
       POSTGRES_DB: sme
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
+      - "${APP_PORT:-3000}:3000" # the app shares this container's network (below), so its port is published here
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -14,5 +21,38 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  app:
+    build: .
+    # Shares the database container's network, so the database is simply localhost:5432 inside the stack (the seed script refuses any non-local
+    # host on purpose) and nothing depends on port 5432 of the host.
+    network_mode: "service:db"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # DEV ONLY (same as .env.example)
+      DATABASE_URL: postgres://sme:sme@localhost:5432/sme
+      APP_DB_PASSWORD: sme_app_dev
+      APP_DATABASE_URL: postgres://sme_app:sme_app_dev@localhost:5432/sme
+      OWNER_SIGNING_PRIVATE_KEY: MC4CAQAwBQYDK2VwBCIEIMHPBo+KcIfFPvF+qEZGB4UwMBnqQ6RL1ZGjx7VErlSY
+      OWNER_SIGNING_PUBLIC_KEY: MCowBQYDK2VwAyEAqgExJrOTLbCcYjQKCQZXck2rbeVwo4npzMF7OeLA6tI=
+      # Offline demo: the recorded model answers, an empty key, no network.
+      LLM_PROVIDER: openai-compatible
+      LLM_MODE: replay
+      LLM_RECORDINGS_DIR: fixtures/llm-recordings-live
+      LLM_API_KEY: ""
+      LLM_MODEL: gpt-4o-mini
+      LLM_BASE_URL: https://api.openai.com/v1
+      SHORTAGE_AUTO_PLAN: "on"
+      MONITOR_AUTO_RECOVER: "on"
+      DEMO_TOOLS: "on"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/login',{redirect:'manual'}).then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
 volumes:
   pgdata:
