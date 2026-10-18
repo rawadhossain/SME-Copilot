@@ -327,6 +327,29 @@ async function main() {
       log("matching: no session 401, no CSRF 403, other company 403, owner 200 with profile and history source; trading start: bad dates 400, owner 200, approver 403");
     }
     {
+      // The Copilot component renders (empty state with its four example chips).
+      const { renderToString } = await import("react-dom/server");
+      const { createElement: h } = await import("react");
+      const { Copilot } = await import("../src/ui/Copilot");
+      const html = renderToString(h(Copilot)).replace(/<!-- -->/g, "");
+      assert.ok(html.includes("Copilot only reads your books") && html.includes("What if Northgate pays 3 weeks late?") && html.includes("Do I need to borrow?") && html.includes("Show me overdue invoices") && html.includes("What if I get an unexpected 15,000 bill next week?"), "the Copilot renders with its example chips");
+    }
+    {
+      // Copilot: a sentence in, a typed and validated request, an answer from the existing read-only engines; any signed-in role of the business.
+      const cUrl = `/api/business/${biz}/copilot`;
+      const say = { message: "What if Northgate pays 3 weeks late?" };
+      assert.equal((await api(cUrl, { body: say, cookie: false, csrf: false })).status, 401, "copilot: no session");
+      assert.equal((await api(cUrl, { body: say, csrf: false })).status, 403, "copilot: no CSRF token");
+      assert.equal((await api("/api/business/50d04f73-3186-40b1-96fe-46f478ea6134/copilot", { body: say })).status, 403, "copilot: another company");
+      const cp = await api(cUrl, { body: say });
+      assert.equal(cp.status, 200, JSON.stringify(cp.json));
+      assert.ok(cp.json.kind === "scenario" && cp.json.hypothetical === true && cp.json.understood.length === 1 && cp.json.links.some((l: any) => String(l.href).includes("/room/simulator?scenario=")), "a scenario answer with how it was understood and a simulator link");
+      assert.equal((await api(cUrl, { body: { message: "Pay Kestrel 10,000 now" } })).json.kind, "action_declined", "an action request is declined");
+      assert.equal((await api(cUrl, { body: { message: "x".repeat(401) } })).status, 400, "an over-long sentence is refused");
+      assert.equal(await asApprover(async () => (await api(cUrl, { body: say })).status), 200, "an approver can ask too");
+      log("copilot: no session 401, no CSRF 403, other company 403, owner 200 (scenario with deep link), action request declined, over-long 400, approver 200");
+    }
+    {
       // Business analysis (cash view): read-only, any signed-in role of the business.
       const aUrl = `/api/business/${biz}/analysis`;
       assert.equal((await api(aUrl, { cookie: false, csrf: false })).status, 401, "analysis: no session");
@@ -378,6 +401,28 @@ async function main() {
       assert.ok(stranger === undefined || stranger.id !== anAlert.id);
       assert.equal((await api("/api/auth/business", { body: { businessId: biz } })).status, 200, "back to the story's company");
       log("alerts: no session 401, no CSRF 403, other company 403, owner 200 (list, run, 30 s cache, acknowledge), approver 200 (list, run)");
+    }
+    {
+      // The Attack lab card renders from the recorded results (fixtures/attack-results.json).
+      const { renderToString } = await import("react-dom/server");
+      const { createElement: h } = await import("react");
+      const { AttackLab } = await import("../src/ui/attack-lab");
+      const recorded = JSON.parse((await import("node:fs")).readFileSync("fixtures/attack-results.json", "utf8"));
+      const html = renderToString(h(AttackLab)).replace(/<!-- -->/g, "");
+      assert.ok(html.includes("Attack lab") && html.includes(`${recorded.summary.attacks} attacks tried, ${recorded.summary.blocked} blocked`) && html.includes("Without the permission gate") && html.includes("test double that exists only in scripts/"), "the attack lab card renders the recorded run");
+      assert.equal((html.match(/Blocked/g) ?? []).length, recorded.summary.blocked, "every recorded attack row says Blocked");
+      log(`attack lab card: renders the recorded run (${recorded.summary.attacks} attacks, ${recorded.summary.blocked} blocked)`);
+    }
+    {
+      // The Evaluation card renders from the recorded results (fixtures/eval-results.json).
+      const { renderToString } = await import("react-dom/server");
+      const { createElement: h } = await import("react");
+      const { EvalCard } = await import("../src/ui/eval-card");
+      const recorded = JSON.parse((await import("node:fs")).readFileSync("fixtures/eval-results.json", "utf8"));
+      const html = renderToString(h(EvalCard)).replace(/<!-- -->/g, "");
+      assert.ok(html.includes("Evaluation") && html.includes("Recorded run of") && html.includes(`seed ${recorded.seed}, ${recorded.cases} generated companies`) && html.includes("Synthetic companies and simulated counterparties. Reproduce it with that command.") && html.includes("Against simpler approaches"), "the evaluation card renders the recorded run");
+      assert.ok(html.includes(`${recorded.summary.shortageCases} of ${recorded.summary.cases} had a cash shortage. ${recorded.summary.executedAndVerified} ran and passed`), "the headline numbers are the recorded ones");
+      log(`evaluation card: renders the recorded run (${recorded.cases} cases, seed ${recorded.seed}, ${recorded.summary.resolvedVerified} resolved and verified)`);
     }
     for (const path of ["/room", "/room/commitments", "/room/funding", `/room/case?run=${shortageRunId}`, "/room/safety", "/room/safety?tab=limits", "/room/safety?tab=records", "/dev"]) {
       const res = await fetch(`${BASE}${path}`, { headers: { cookie }, redirect: "manual" });

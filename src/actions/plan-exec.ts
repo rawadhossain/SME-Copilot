@@ -260,7 +260,12 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
       // Batch 13: when a counterparty pushed back, the agreements already reached stay on hold so the owner can keep them.
       if (o.keepHeld && (b.status === "agreed" || b.status === "offered") && !b.withdrawn) continue;
       const live: { target: "thread" | "application"; id: string }[] = [];
-      if (b.applicationId && !b.withdrawn && (b.status === "offered" || b.status === "committed")) live.push({ target: "application", id: b.applicationId });
+      // A refused or out-of-terms finance branch (needs_replan) can still have an open application this execution created: withdraw it so the re-plan can start.
+      const openApp = async (id: string) => {
+        const [a] = await db.select({ status: sandboxApplications.status }).from(sandboxApplications).where(and(eq(sandboxApplications.id, id), eq(sandboxApplications.businessId, businessId)));
+        return a?.status === "offered" || a?.status === "accepted";
+      };
+      if (b.applicationId && !b.withdrawn && (b.status === "offered" || b.status === "committed" || ((b.status === "needs_replan" || b.status === "failed") && (await openApp(b.applicationId))))) live.push({ target: "application", id: b.applicationId });
       if (b.threadId && !b.withdrawn && (b.status === "agreed" || b.status === "committed")) live.push({ target: "thread", id: b.threadId });
       for (const t of live) {
         try {
@@ -333,7 +338,24 @@ export async function executePlan(db: Db, authorisationIdInput: string, opts: Ex
         }
       }
       if (await adopt(e, b, request)) continue;
-      const sent = await act(`send:${e.index}`, request, `${key}:send`);
+      let sent: Awaited<ReturnType<typeof act>>;
+      try {
+        sent = await act(`send:${e.index}`, request, `${key}:send`);
+      } catch (err) {
+        // A lender fee above the fee limit in the signed mandate fails the per-action check. That is a lender refusal, not a crash: the offer is never taken,
+        // the lever is excluded for the re-plan, and the open application is withdrawn with the rest of this attempt.
+        if (e.lever.kind !== "finance_invoice" || !(err instanceof StepError) || !err.message.includes("offer_fee_within_limit")) throw err;
+        const [prop] = await db.select().from(actionProposals).where(and(eq(actionProposals.businessId, businessId), eq(actionProposals.idempotencyKey, `plan:${authorisationId}:${key}:send`)));
+        const appId = response(prop?.result).applicationId;
+        if (prop) b.proposalIds.push(prop.id);
+        if (appId) b.applicationId = appId;
+        b.status = "needs_replan";
+        b.reason = "the lender's fee is above the fee limit in your signed limits";
+        outcome.constraints.push({ kind: "finance_invoice", counterpartyId: b.counterpartyId, excluded: true, source: "offer", round: (runRow?.round ?? 0) + 1 });
+        await appendRecord(db, { businessId, event: ACTION_EVENTS.PLAN_BRANCH_RESULT, actor: "executor", detail: { authorisationId, index: e.index, kind: e.lever.kind, counterpartyId: b.counterpartyId, status: b.status, reason: b.reason, agreedTerms: null, offer: null } });
+        await save();
+        continue;
+      }
       b.proposalIds.push(sent.proposalId);
       let verdict: BranchVerdict;
       if (e.lever.kind === "finance_invoice") {

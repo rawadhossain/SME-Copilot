@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Btn, Card, Chip, ErrorNote, Loading, Seal, Stat } from "@/ui/kit";
 import { date, money, pct, short } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
+import { AttackLab } from "@/ui/attack-lab";
+import { EvalCard } from "@/ui/eval-card";
 
 const KIND: Record<string, string> = {
   "buyer.request_deposit": "Ask a buyer for a deposit", "buyer.request_early_payment": "Offer a buyer an early-payment discount", "buyer.chase_payment": "Ask a buyer to pay overdue invoices",
@@ -106,6 +108,10 @@ export default function MandatePage() {
           </div>
         )}
       </Card>
+
+      <AttackLab />
+
+      <EvalCard />
 
       <Card title="How your signature is protected" subtitle="What is and is not protected today">
         <ul className="list-disc space-y-1 pl-5 text-sm text-ink-soft">
