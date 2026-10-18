@@ -1,35 +1,80 @@
 @import "tailwindcss";
 
-/* Direction: a calm ledger. Warm paper, deep ink, one teal accent. Colour is used only for meaning:
-   good = verified / safe, caution = needs attention, danger = blocked or below zero, neutral = information. */
+/* DESIGN TOKENS (v2). Defined once, here. A calm ledger: warm off-white canvas with a fixed, soft sage/mint/cream wash behind everything (so glass has something
+   to blur), near-opaque white cards, ONE accent (a deep, slightly cool green) for primary actions and positive states. Colour carries meaning only, and is never the only
+   signal: every status also has an icon or a word. Text on the canvas and on cards is >= 4.5:1.
+   Scales: space 4/8/12/16/24/32/48 (Tailwind steps 1/2/3/4/6/8/12) - radius 8/12/16/24 - control height 40px - type: Geist (local file) - money always .num (tabular). */
 :root {
-  --paper: #f4f1e8;
-  --panel: #fcfbf7;
-  --ink: #16201e;
-  --ink-soft: #566360;
-  --line: #ddd7c8;
-  --line-strong: #c4bca8;
-  --accent: #0d5a50;
-  --accent-soft: #d9ebe6;
-  --good: #1b7a4a;
-  --good-soft: #def0e4;
-  --caution: #9a5c07;
-  --caution-soft: #f7e8cd;
-  --danger: #b0261d;
-  --danger-soft: #f7dcd8;
-  --neutral: #55626b;
-  --neutral-soft: #e7e6df;
+  /* surfaces */
+  --paper: #f6f4ee;          /* the canvas */
+  --panel: #ffffff;          /* cards: near-opaque white */
+  --panel-quiet: #faf9f5;    /* table heads, inset areas */
+  /* text */
+  --ink: #1c2521;
+  --ink-soft: #56615b;       /* secondary text, 6:1 on the canvas */
+  /* lines */
+  --line: #e7e5dc;           /* hairline borders */
+  --line-strong: #d3d1c6;
+  /* the one accent, and its tints */
+  --accent: #1d5a4c;
+  --accent-strong: #154439;
+  --accent-soft: #e4efea;
+  --sage: #8fb7a3;
+  /* semantic colours: muted, always paired with an icon or a label */
+  --good: #1c7152;
+  --good-soft: #e2f0e8;
+  --caution: #8a5a0b;
+  --caution-soft: #f8edd6;
+  --danger: #a63f3b;
+  --danger-soft: #f8e7e4;
+  --neutral: #4e5a54;
+  --neutral-soft: #ecebe4;
+  --info: #3b6c93;
+
+  /* radius scale */
+  --r-sm: 8px;   /* chips, small controls */
+  --r-md: 12px;  /* controls, inner panels */
+  --r-lg: 16px;  /* cards */
+  --r-xl: 24px;  /* the floating sidebar, dialogs */
+  --control-h: 40px;
+
+  /* shadows: one soft layered set */
+  --shadow-soft: 0 1px 2px rgb(28 37 33 / 0.04), 0 4px 16px -10px rgb(28 37 33 / 0.12);
+  --shadow-lift: 0 2px 4px rgb(28 37 33 / 0.05), 0 16px 32px -16px rgb(28 37 33 / 0.26);
+  --shadow-pop: 0 24px 60px -24px rgb(28 37 33 / 0.45);
+  --shadow-glass: 0 1px 0 rgb(255 255 255 / 0.7) inset, 0 0 0 1px rgb(28 37 33 / 0.04), 0 2px 6px rgb(28 37 33 / 0.05), 0 24px 48px -20px rgb(28 37 33 / 0.28);
+
+  /* glass: the sidebar, header bar, drawers, dialogs and popovers only */
+  --glass: rgb(255 255 255 / 0.62);
+  --glass-strong: rgb(255 255 255 / 0.82);
+  --glass-line: rgb(255 255 255 / 0.75);   /* 1px translucent white border */
+  --glass-solid: #fbfaf6;                  /* fallback where backdrop-filter is unsupported */
+  --sidebar-w: 15rem;
+  --sidebar-gap: 1rem;
+
+  /* motion: 150-200ms, one vocabulary */
+  --dur-press: 110ms;
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 480ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  /* damped spring sampled once; falls back to the transition default where linear() is unsupported */
+  --ease-spring: linear(0, 0.0835, 0.2583, 0.4499, 0.6209, 0.757, 0.8565, 0.9243, 0.9672, 0.992, 1.0048, 1.0101, 1.0111, 1.0099, 1.0079, 1.0057, 1.0039, 1.0025, 1.0014, 1.0007, 1);
 }
 
 @theme inline {
   --color-paper: var(--paper);
   --color-panel: var(--panel);
+  --color-panel-quiet: var(--panel-quiet);
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
+  --color-sage: var(--sage);
   --color-good: var(--good);
   --color-good-soft: var(--good-soft);
   --color-caution: var(--caution);
@@ -38,26 +83,147 @@
   --color-danger-soft: var(--danger-soft);
   --color-neutral: var(--neutral);
   --color-neutral-soft: var(--neutral-soft);
+  --color-info: var(--info);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --shadow-soft: var(--shadow-soft);
+  --shadow-lift: var(--shadow-lift);
 }
 
 html { background: var(--paper); color-scheme: light; }
 body {
-  background: var(--paper);
+  background: transparent;
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+/* the fixed atmosphere: three low-saturation washes (sage, mint, cream) that stay put while the page scrolls */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60rem 42rem at 6% -8%, rgb(176 208 189 / 0.55), transparent 62%),
+    radial-gradient(54rem 40rem at 98% 4%, rgb(196 226 214 / 0.5), transparent 60%),
+    radial-gradient(60rem 44rem at 72% 108%, rgb(240 228 198 / 0.7), transparent 62%),
+    var(--paper);
+}
+h1, h2, h3 { text-wrap: balance; }
 .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
 .display { letter-spacing: -0.02em; font-weight: 600; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* the browser surfaces that are otherwise nobody's design */
+::selection { background: var(--accent-soft); color: var(--accent-strong); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+input, select, textarea { accent-color: var(--accent); caret-color: var(--accent); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(29 90 76 / 0.2); border-color: var(--accent); }
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+a { text-underline-offset: 3px; }
+
+/* ---- surfaces ---- */
+/* A row of related figures read as one statement: one surface, hairline dividers, no boxes inside boxes. */
+.strip { display: grid; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-soft); }
+.strip > * + * { border-left: 1px solid var(--line); }
+/* group of disclosures that read as one list, not a stack of cards */
+.flat-list { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-soft); overflow: hidden; }
+.flat-list > details, .flat-list > div > details { border: 0; border-radius: 0; box-shadow: none; background: transparent; border-top: 1px solid var(--line); }
+.flat-list > details:first-child, .flat-list > div:first-child > details { border-top: 0; }
+.flat-list > details > summary, .flat-list > div > details > summary { border-radius: 0; }
+
+.surface { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-soft); }
+/* GLASS: only the sidebar, header bar, drawers, dialogs and popovers. Cards stay near-opaque white. A solid fallback is given first. */
+.glass, .glass-pop, .sidebar-glass { background: var(--glass-solid); }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); }
+  .glass-pop { background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); }
+  .sidebar-glass { background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); }
+}
+.glass { border-bottom: 1px solid rgb(28 37 33 / 0.06); box-shadow: 0 1px 0 rgb(255 255 255 / 0.6) inset; }
+.glass-pop { border: 1px solid var(--glass-line); box-shadow: var(--shadow-glass); }
+.sidebar-glass { border: 1px solid var(--glass-line); border-radius: var(--r-xl); box-shadow: var(--shadow-glass); }
+/* a small glass card (company switcher) inside the sidebar */
+.glass-card { background: rgb(255 255 255 / 0.55); border: 1px solid rgb(255 255 255 / 0.8); border-radius: var(--r-lg); box-shadow: 0 1px 0 rgb(255 255 255 / 0.8) inset, 0 1px 3px rgb(28 37 33 / 0.06); }
+/* sidebar nav item: 40px, soft tinted pill when active, a small indicator on its left edge */
+.nav-item { position: relative; display: flex; align-items: center; gap: 0.75rem; height: var(--control-h); padding: 0 0.75rem; border-radius: var(--r-md); font-size: 0.9375rem; font-weight: 500; color: var(--ink-soft); transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-press) var(--ease-out); }
+.nav-item:hover { background: rgb(28 37 33 / 0.05); color: var(--ink); }
+.nav-item[aria-current="page"] { background: rgb(29 90 76 / 0.11); color: var(--accent-strong); }
+.nav-item[aria-current="page"]::before { content: ""; position: absolute; left: -2px; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--accent); }
+.nav-item:active { transform: scale(0.98); }
+
+/* segmented tabs: one control for every tab row in the product */
+.seg { display: inline-flex; gap: 2px; padding: 4px; border-radius: var(--r-md); background: rgb(28 37 33 / 0.06); height: var(--control-h); align-items: center; }
+.seg-item { display: inline-flex; align-items: center; height: 32px; white-space: nowrap; padding: 0 0.875rem; border-radius: var(--r-sm); font-size: 0.875rem; font-weight: 500; color: var(--ink-soft); transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, transform var(--dur-press) var(--ease-out); }
+.seg-item:hover { color: var(--ink); }
+.seg-item:focus-visible { outline-offset: 0; }
+.seg-item:active { transform: scale(0.97); }
+.seg-item[aria-selected="true"], .seg-item[aria-pressed="true"], .seg-item[aria-current="page"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow-soft); }
+
+/* skeleton: a quiet shimmer where content will be */
+.skeleton { border-radius: var(--r-sm); background: linear-gradient(90deg, rgb(28 37 33 / 0.06), rgb(28 37 33 / 0.1), rgb(28 37 33 / 0.06)); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+/* ---- tactile feedback: one press and one lift vocabulary ---- */
+.press { transition: transform var(--dur-press) var(--ease-out), background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, color var(--dur-fast) ease, opacity var(--dur-fast) ease; }
+.press:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(0.97); transition-duration: 60ms; }
+@media (hover: hover) {
+  .lift { transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-fast) ease; }
+  .lift:hover { transform: translateY(-1px); box-shadow: var(--shadow-lift); border-color: var(--line-strong); }
+  .row-hover { transition: background-color var(--dur-fast) ease; }
+  .row-hover:hover { background: var(--panel-quiet); }
+}
+
+/* ---- entrances: from already-visible defaults, ease-out, used once per view ---- */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes swell { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.route-enter { animation: rise var(--dur-slow) var(--ease-out) both; }
+.rise { animation: rise var(--dur-slow) var(--ease-out) both; animation-delay: calc(var(--i, 0) * 55ms); }
+.fade-in { animation: fade var(--dur-base) ease both; }
+.draw-line { stroke-dasharray: 1; stroke-dashoffset: 0; animation: draw 900ms var(--ease-out) both; }
+.chart-area { animation: fade 700ms ease 250ms both; }
+.swell { animation: swell var(--dur-base) var(--ease-spring) both; transform-origin: center; }
+
+/* ---- overlays ---- */
 dialog.wide { max-width: min(980px, 96vw); }
-dialog::backdrop { background: rgba(22, 32, 30, 0.45); }
-dialog { margin: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); color: var(--ink); padding: 0; max-width: min(720px, 94vw); width: 100%; }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { dialog { background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); } }
+dialog {
+  margin: auto; border: 1px solid var(--glass-line); border-radius: var(--r-xl); background: var(--glass-solid); color: var(--ink);
+  padding: 0; max-width: min(720px, 94vw); width: 100%; box-shadow: var(--shadow-pop);
+  opacity: 1; transform: none;
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out), overlay var(--dur-base) allow-discrete, display var(--dur-base) allow-discrete;
+}
+dialog:not([open]) { opacity: 0; transform: translateY(10px) scale(0.985); }
+@starting-style { dialog[open] { opacity: 0; transform: translateY(10px) scale(0.985); } }
+dialog::backdrop { background: rgb(28 37 33 / 0.32); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); transition: opacity var(--dur-base) ease, display var(--dur-base) allow-discrete, overlay var(--dur-base) allow-discrete; opacity: 1; }
+dialog:not([open])::backdrop { opacity: 0; }
+@starting-style { dialog[open]::backdrop { opacity: 0; } }
+/* the Ask drawer slides in from the right instead */
+dialog.drawer { margin: 0 0 0 auto; border-radius: var(--r-xl) 0 0 var(--r-xl); transform: none; }
+dialog.drawer:not([open]) { transform: translateX(24px); }
+@starting-style { dialog.drawer[open] { transform: translateX(24px); } }
+
+details > summary { transition: background-color var(--dur-fast) ease; }
+details[open] > summary ~ * { animation: fade var(--dur-base) ease both; }
+
 @media (prefers-reduced-motion: no-preference) {
   .pulse { animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+/* underline tabs: the tab row under a page title (section pages, the builder's Steps | Map) */
+.utabs { display: flex; flex-wrap: wrap; gap: 1.5rem; border-bottom: 1px solid var(--line); }
+.utab { position: relative; display: inline-flex; align-items: center; height: var(--control-h); font-size: 0.9375rem; font-weight: 500; color: var(--ink-soft); white-space: nowrap; transition: color var(--dur-fast, 120ms) var(--ease-out, ease-out); }
+.utab:hover { color: var(--ink); }
+.utab:focus-visible { outline-offset: 2px; border-radius: var(--r-sm); }
+.utab[aria-current="page"], .utab[aria-selected="true"] { color: var(--accent-strong); }
+.utab[aria-current="page"]::after, .utab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+
+/* a chip inside a sentence: a pill you press to change that word (it opens a picker) */
+.pick { display: inline-flex; align-items: center; gap: 0.375rem; min-height: 32px; padding: 0 0.625rem; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--panel); font-size: 0.9375rem; font-weight: 500; color: var(--ink); transition: background-color var(--dur-fast, 120ms), border-color var(--dur-fast, 120ms); }
+.pick:hover { border-color: rgb(29 90 76 / 0.5); background: var(--accent-soft); }
+.pick[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.pick:disabled { opacity: 0.6; cursor: default; }

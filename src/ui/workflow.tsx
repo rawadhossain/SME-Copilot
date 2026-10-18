@@ -6,15 +6,15 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Btn, Chip, ErrorNote, Loading, type Tone } from "@/ui/kit";
+import { Btn, Chip, ErrorNote, Loading, Note, type Tone } from "@/ui/kit";
 import { DEFAULT_PLAYBOOK, type Playbook } from "@/domain/playbook";
 import { buildCaseMap, type MapNode, type MapStatus } from "@/ui/case-map-build";
 import { LEVER_NAME, date, money, pct } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 
 const TONE: Record<MapStatus, Tone> = { done: "good", refused: "danger", rolled_back: "caution", waiting: "neutral", failed: "danger" };
-const STROKE: Record<MapStatus, string> = { done: "#1b7a4a", refused: "#b3261e", rolled_back: "#a15c00", waiting: "#8b958f", failed: "#b3261e" };
-const TYPE_COLOR: Record<string, string> = { Trigger: "#a15c00", Analyse: "#2457a6", Decision: "#6b3fa0", Approve: "#1b7a4a", Check: "#0d5a50", Act: "#b04a12", "Re-plan": "#8a3b6e", Verify: "#0d5a50", Export: "#53605a", Recovery: "#53605a" };
+const STROKE: Record<MapStatus, string> = { done: "var(--good)", refused: "var(--danger)", rolled_back: "var(--caution)", waiting: "var(--line-strong)", failed: "var(--danger)" };
+const TYPE_COLOR: Record<string, string> = { Trigger: "var(--caution)", Analyse: "var(--info)", Decision: "var(--neutral)", Approve: "var(--good)", Check: "var(--accent)", Act: "var(--accent)", "Re-plan": "var(--caution)", Verify: "var(--accent)", Export: "var(--neutral)", Recovery: "var(--neutral)" };
 
 const W = 176, H = 66, GX = 44, GY = 12, ROW = H + GY, PADX = 40, PADY = 40;
 const X = (col: number) => PADX + col * (W + GX);
@@ -27,6 +27,7 @@ const PROPOSAL_KIND: Record<string, string> = {
 };
 const MAX_ROUNDS = 2; // MAX_REPLAN_ROUNDS in src/domain/constraints.ts
 const MID = 2.5;
+const ZMIN = 0.25, ZMAX = 2.2; // zoom limits
 
 // Playbook controls per canvas node. Each one is wired to code that reads it: levers narrow the planner and simulator, the second approver adds a human step,
 // auto-prepare stops the shortage check from starting a planning run by itself. Nothing here can widen the signed limits.
@@ -203,54 +204,81 @@ export function WorkflowCanvas() {
   const fit = useCallback(() => {
     const el = box.current;
     if (!el || el.clientWidth === 0) return;
-    const k = Math.min(1.6, Math.max(0.2, Math.floor(Math.min((el.clientWidth - 24) / WIDTH, (el.clientHeight - 24) / HEIGHT) * 100) / 100));
+    const k = Math.min(ZMAX, Math.max(ZMIN, Math.floor(Math.min((el.clientWidth - 24) / WIDTH, (el.clientHeight - 24) / HEIGHT) * 100) / 100));
     setView({ k, x: Math.round((el.clientWidth - WIDTH * k) / 2), y: Math.round((el.clientHeight - HEIGHT * k) / 2) });
   }, []);
+  // The first view is a readable one: the start of the flow at a legible scale, vertically centred. "Fit" shows the whole diagram instead.
+  const home = useCallback(() => {
+    const el = box.current;
+    if (!el || el.clientWidth === 0) return;
+    const fitK = Math.min((el.clientWidth - 24) / WIDTH, (el.clientHeight - 24) / HEIGHT);
+    const k = Math.min(ZMAX, Math.max(ZMIN, Math.max(fitK, 0.6)));
+    setView({ k, x: 24, y: Math.round(el.clientHeight / 2 - (Y(MID) + H / 2) * k) });
+  }, []);
+  useEffect(() => { home(); }, [home]);
+  // Zoom around a point of the canvas (the pointer for the wheel, the centre for the buttons), so what you are looking at stays under the cursor.
+  const zoomAt = useCallback((f: number, cx: number, cy: number) => setView((v) => {
+    const k = Math.min(ZMAX, Math.max(ZMIN, v.k * f));
+    const r = k / v.k;
+    return { k, x: cx - (cx - v.x) * r, y: cy - (cy - v.y) * r };
+  }), []);
+  const zoom = (f: number) => { const el = box.current; if (el) zoomAt(f, el.clientWidth / 2, el.clientHeight / 2); };
+  // The wheel must be a non-passive native listener, or the page would scroll while the canvas zooms.
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [fit]);
-  const zoom = (d: number) => setView((v) => ({ ...v, k: Math.min(1.6, Math.max(0.2, Math.round((v.k + d) * 10) / 10)) }));
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); const r = el.getBoundingClientRect(); zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top); };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+  const onKey = (e: React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).closest("button,a,input,select")) return;
+    const step = 48;
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); zoom(1.2); }
+    else if (e.key === "-") { e.preventDefault(); zoom(1 / 1.2); }
+    else if (e.key === "0") { e.preventDefault(); fit(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); setView((v) => ({ ...v, x: v.x + step })); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setView((v) => ({ ...v, x: v.x - step })); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setView((v) => ({ ...v, y: v.y + step })); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); setView((v) => ({ ...v, y: v.y - step })); }
+  };
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h2 className="display text-2xl">Workflow</h2><p className="text-ink-soft">How your assistant works, step by step. Fixed by the product; nothing here can be rewired. Synthetic sandbox data.</p></div>
+        <div className="flex items-center gap-3 text-sm text-ink-soft"><Note>Fixed by the product · synthetic sandbox data</Note><span>{mode === "debug" ? "Debug: what happened in one case" : "Builder: what each step does"}</span></div>
         {mode === "debug" && roots.length > 0 && caseId && (
           <label className="text-sm text-ink-soft">Case <select className="ml-2 rounded-lg border border-line-strong bg-white px-2 py-1.5 text-ink" value={caseId} onChange={(e) => { setUrl("debug", e.target.value); }}>
             {roots.map((c) => <option key={c.runId} value={c.runId}>{date(c.startedAt)} · {c.lifecycle}</option>)}</select></label>
         )}
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
-      <div className="grid gap-3 lg:grid-cols-[1fr_340px]">
-        <div ref={box} className="relative h-[620px] select-none overflow-hidden rounded-2xl border border-line bg-[#f7f8f6] [background-image:radial-gradient(#cfd5d1_1px,transparent_1px)] [background-size:20px_20px]"
-          style={{ touchAction: "none", cursor: "grab" }}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div ref={box} tabIndex={0} role="group" aria-label="Workflow diagram. Scroll to zoom, drag to pan, plus and minus to zoom, arrow keys to move, zero to fit." onKeyDown={onKey}
+          className="relative h-[calc(100vh-15rem)] min-h-[480px] cursor-grab select-none active:cursor-grabbing overflow-hidden rounded-2xl border border-line bg-panel-quiet [background-image:radial-gradient(rgb(28_37_33/0.12)_1px,transparent_1px)] [background-size:20px_20px]"
+          style={{ touchAction: "none" }}
           onPointerDown={(e) => { if ((e.target as HTMLElement).closest("button,a")) return; e.currentTarget.setPointerCapture(e.pointerId); drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }; }}
           onPointerMove={(e) => { const d = drag.current; if (d) setView((v) => ({ ...v, x: d.x + e.clientX - d.px, y: d.y + e.clientY - d.py })); }}
           onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
           <div className="absolute left-0 top-0 origin-top-left" style={{ width: WIDTH, height: HEIGHT, transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
             <svg width={WIDTH} height={HEIGHT} className="absolute inset-0" aria-hidden>
-              <rect x={GROUP.x} y={GROUP.y} width={GROUP.w} height={GROUP.h} rx={14} fill="none" stroke="#b9c1bc" strokeDasharray="4 4" />
+              <rect x={GROUP.x} y={GROUP.y} width={GROUP.w} height={GROUP.h} rx={14} fill="none" stroke="var(--line-strong)" strokeDasharray="4 4" />
               {EDGES.map((e, i) => {
                 const refused = e.danger && mode === "debug" && map?.nodes.some((n) => n.status === "refused");
-                return <path key={i} d={e.c1 && e.c2 ? `M${e.a.x},${e.a.y} C${e.c1.x},${e.c1.y} ${e.c2.x},${e.c2.y} ${e.b.x},${e.b.y}` : `M${e.a.x},${e.a.y} L${e.b.x},${e.b.y}`} fill="none" stroke={refused || (e.danger && mode === "builder") ? "#b3261e" : "#a3ada7"} strokeWidth={1.2} strokeDasharray={e.dashed ? "5 4" : undefined} />;
+                return <path key={i} d={e.c1 && e.c2 ? `M${e.a.x},${e.a.y} C${e.c1.x},${e.c1.y} ${e.c2.x},${e.c2.y} ${e.b.x},${e.b.y}` : `M${e.a.x},${e.a.y} L${e.b.x},${e.b.y}`} fill="none" stroke={refused || (e.danger && mode === "builder") ? "var(--danger)" : "var(--line-strong)"} strokeWidth={1.2} strokeDasharray={e.dashed ? "5 4" : undefined} />;
               })}
             </svg>
             <span className="absolute text-[11px] font-medium uppercase tracking-wide text-ink-soft" style={{ left: GROUP.x + 8, top: GROUP.y + 4 }}>Counterparty asks, in parallel</span>
-            {EDGES.filter((e) => e.label).map((e, i) => { const m = midOf(e); return <span key={i} className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-line bg-white px-2 py-0.5 text-[11px] text-ink-soft" style={{ left: m.x, top: m.y }}>{e.label}</span>; })}
+            {EDGES.filter((e) => e.label).map((e, i) => { const m = midOf(e); return <span key={i} className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-line bg-white px-2 py-0.5 text-[11px] text-ink-soft shadow-soft" style={{ left: m.x, top: m.y }}>{e.label}</span>; })}
             {DEFS.map((d) => {
               const ms = mode === "debug" ? mapped(d.id) : [];
               const st = ms.at(-1);
               const dim = mode === "debug" && map && !st && d.id.startsWith("act-");
               return (
                 <button key={d.id} type="button" onClick={() => setSel(sel === d.id ? null : d.id)} aria-pressed={sel === d.id}
-                  className={`absolute overflow-hidden border bg-white p-2 text-left shadow-sm ${d.kind === "decision" ? "rounded-[22px]" : "rounded-lg"} ${sel === d.id ? "ring-2 ring-accent" : ""} ${dim ? "opacity-50" : ""}`}
-                  style={{ left: X(d.col), top: Y(d.row), width: W, height: H, borderColor: st ? STROKE[st.status] : "#d6dbd8" }}>
-                  <span className="flex items-center justify-between"><span className="block text-[10px] font-bold uppercase tracking-wider" style={{ color: TYPE_COLOR[d.type] }}>{d.type}</span>{mode === "builder" && customised(d.id, draft) && <span className="rounded-full bg-accent px-1.5 text-[9px] font-semibold uppercase tracking-wide text-white">Customised</span>}</span>
+                  className={`absolute overflow-hidden border bg-white p-2.5 text-left shadow-soft transition-shadow duration-150 hover:shadow-lift ${d.kind === "decision" ? "rounded-[22px]" : "rounded-xl"} ${sel === d.id ? "ring-2 ring-accent" : ""} ${dim ? "opacity-50" : ""}`}
+                  style={{ left: X(d.col), top: Y(d.row), width: W, height: H, borderColor: st ? STROKE[st.status] : "var(--line-strong)" }}>
+                  <span className="flex items-center justify-between"><span className="block text-[10px] font-semibold uppercase tracking-wider" style={{ color: TYPE_COLOR[d.type] }}>{d.type}</span>{mode === "builder" && customised(d.id, draft) && <span className="rounded-full bg-accent px-1.5 text-[9px] font-semibold uppercase tracking-wide text-white">Customised</span>}</span>
                   <span className="block truncate text-[13px] font-semibold leading-tight" title={d.title}>{d.title}</span>
                   {mode === "debug" && map ? <span className="mt-0.5 flex items-center gap-1 text-[11px]"><Chip tone={st ? TONE[st.status] : "neutral"}>{st ? st.label : "no record"}</Chip></span> : <span className="block truncate text-[11px] text-ink-soft">{d.sub}</span>}
                 </button>
@@ -259,24 +287,25 @@ export function WorkflowCanvas() {
           </div>
           {mode === "debug" && !data && !error && <div className="absolute inset-0 grid place-items-center bg-white/60"><Loading label="Loading the case" /></div>}
           {mode === "debug" && cases && roots.length === 0 && <p className="absolute left-4 top-4 rounded-lg bg-white px-3 py-2 text-sm text-ink-soft shadow-sm">No case yet, so nothing to show. Builder mode explains each step.</p>}
-          <div className="absolute right-3 top-3 flex items-center gap-1 rounded-lg border border-line bg-white p-1 text-sm shadow-sm" onPointerDown={(e) => e.stopPropagation()}>
-            <button type="button" aria-label="Zoom out" className="h-7 w-7 rounded hover:bg-neutral-soft" onClick={() => zoom(-0.1)}>−</button>
+          <div className="glass-pop absolute right-3 top-3 flex items-center gap-1 rounded-xl p-1 text-sm" onPointerDown={(e) => e.stopPropagation()}>
+            <button type="button" aria-label="Zoom out" className="h-7 w-7 rounded hover:bg-neutral-soft" onClick={() => zoom(1 / 1.2)}>−</button>
             <span className="num w-12 text-center">{Math.round(view.k * 100)}%</span>
-            <button type="button" aria-label="Zoom in" className="h-7 w-7 rounded hover:bg-neutral-soft" onClick={() => zoom(0.1)}>+</button>
+            <button type="button" aria-label="Zoom in" className="h-7 w-7 rounded hover:bg-neutral-soft" onClick={() => zoom(1.2)}>+</button>
             <button type="button" aria-label="Fit the whole workflow in view" className="ml-1 rounded px-2 py-1 text-xs font-medium hover:bg-neutral-soft" onClick={fit}>Fit</button>
           </div>
-          <div role="tablist" aria-label="Workflow mode" className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1 rounded-full border border-line bg-white p-1 text-sm shadow-sm" onPointerDown={(e) => e.stopPropagation()}>
+          <p className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/80 px-2 py-1 text-[11px] text-ink-soft">Scroll to zoom · drag to move · Fit shows everything</p>
+          <div role="tablist" aria-label="Workflow mode" className="glass-pop absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1 rounded-full p-1 text-sm" onPointerDown={(e) => e.stopPropagation()}>
             {(["builder", "debug"] as const).map((m) => (
               <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setUrl(m, m === "debug" ? caseParam : null); }}
-                className={`rounded-full px-4 py-1.5 font-medium ${mode === m ? "bg-accent text-white" : "text-ink-soft hover:text-ink"}`}>{m === "builder" ? "Builder" : "Debug"}</button>
+                className={`press h-8 rounded-full px-4 font-medium ${mode === m ? "bg-accent text-white" : "text-ink-soft hover:text-ink"}`}>{m === "builder" ? "Builder" : "Debug"}</button>
             ))}
           </div>
         </div>
 
-        <aside className="rounded-2xl border border-line bg-panel p-4 text-sm lg:max-h-[620px] lg:overflow-y-auto" aria-label="Step details">
+        <aside className="surface p-5 text-sm lg:max-h-[620px] lg:overflow-y-auto" aria-label="Step details">
           {!open ? <p className="text-ink-soft">{mode === "builder" ? "Click a step to see what it does, what it reads, what it can never do, and the limits that apply." : "Click a step to see what happened in this case."}</p> : (
             <div className="space-y-3">
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: TYPE_COLOR[open.type] }}>{open.type}</p><h3 className="display text-lg leading-tight">{open.title}</h3>{mode === "builder" && customised(open.id, draft) && <div className="mt-1"><Chip tone="accent">Customised</Chip></div>}</div>
+              <div><p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: TYPE_COLOR[open.type] }}>{open.type}</p><h3 className="display text-lg leading-tight">{open.title}</h3>{mode === "builder" && customised(open.id, draft) && <div className="mt-1"><Chip tone="accent">Customised</Chip></div>}</div>
               {mode === "builder" ? <BuilderPanel d={open} limits={limits} cur={cur} draft={draft} onChange={(path, v) => { setPbMsg(null); setDraft((p) => setAt(p, path, v)); }} canEdit={!!isOwner && !saving} lastLever={lastLever} /> : <DebugPanel d={open} nodes={mapped(open.id)} ready={!!map} />}
             </div>
           )}

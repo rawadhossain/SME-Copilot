@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
-import { Btn, Card, Chip, ErrorNote, Loading, Seal, Stat } from "@/ui/kit";
+import { Btn, Card, Chip, Disclosure, ErrorNote, Gauge, InfoPopover, Loading, Metric, Seal } from "@/ui/kit";
 import { date, money, pct, short } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 import { AttackLab } from "@/ui/attack-lab";
@@ -12,6 +12,9 @@ const KIND: Record<string, string> = {
   "supplier.reduce_deposit": "Ask a supplier to lower a deposit", "supplier.defer_balance": "Ask a supplier to defer a balance", "lender.apply_invoice_finance": "Apply for invoice finance",
 };
 const PURPOSE: Record<string, string> = { supplier: "supplier payments", loan: "loan repayments", payroll: "payroll", tax: "tax", other: "other payments" };
+
+/** used / allowed as a percentage for the bar (presentation only; every figure shown comes from the server). */
+const share = (used: bigint, allowed: string): number | null => (BigInt(allowed) > 0n ? Number((used * 1000n) / BigInt(allowed)) / 10 : null);
 
 const clock = () => new Date().toLocaleTimeString("en-GB");
 const stamp = () => Date.now().toString(36);
@@ -35,6 +38,11 @@ export default function MandatePage() {
   const m = info.mandate, L = m.limits;
   const kestrel = sandbox?.payees?.find((p: any) => p.name.includes("Kestrel"));
   const customer = sandbox?.counterparties?.find((c: any) => c.role === "customer");
+  // What the sandbox bank already has against the limits (scheduled and paid, not failed or cancelled).
+  const live: any[] = (sandbox?.payments ?? []).filter((p: any) => !["failed", "cancelled", "canceled"].includes(p.status));
+  const biggest = live.reduce((a: bigint, p: any) => (BigInt(p.amountMinor) > a ? BigInt(p.amountMinor) : a), 0n);
+  const today = live.filter((p: any) => p.scheduledFor === sandbox?.asOf).reduce((a: bigint, p: any) => a + BigInt(p.amountMinor), 0n);
+  const balance: string | null = sandbox?.banks?.[0]?.balanceMinor ?? null;
 
   const attempts: { id: string; title: string; expect: string; request: any }[] = [
     { id: "payee", title: "Pay someone who is not an approved payee", expect: "Denied: only payees you approved can be paid.", request: { kind: "sandbox.schedule_payment", payeeId: "00000000-0000-4000-8000-0000000000aa", amountMinor: "100000", currency: cur, scheduledFor: sandbox?.asOf, purpose: "supplier" } },
@@ -55,16 +63,15 @@ export default function MandatePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div><h2 className="display text-2xl">Your limits</h2><p className="text-ink-soft">The rules you signed for what your assistant may do. They are enforced by code on every action, never by the AI&apos;s own judgement.</p></div>
-        <div className="flex items-center gap-2"><Seal>Signed · version {info.version}</Seal>{info.signatureValid ? <Chip tone="good">signature verifies</Chip> : <Chip tone="danger">signature INVALID: all actions denied</Chip>}</div>
-      </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Largest single payment" value={money(L.maxPaymentMinor, cur)} />
-        <Stat label="Largest outflow in a day" value={money(L.maxDailyOutflowMinor, cur)} />
-        <Stat label="Bank balance floor" value={money(L.minBankBalanceMinor, cur)} sub="never projected below this" />
-        <Stat label="Second confirmation above" value={money(L.requireSecondConfirmationAboveMinor, cur)} sub="a different approver must also sign" />
-      </div>
+      <section className="surface p-6" aria-label="Your signed limits">
+        <div className="flex flex-wrap items-center gap-2"><Seal>Signed · version {info.version}</Seal>{info.signatureValid ? <Chip tone="good">signature verifies</Chip> : <Chip tone="danger">signature INVALID: all actions denied</Chip>}<InfoPopover label="About these limits">Enforced by code on every action, never by the AI&apos;s judgement.</InfoPopover></div>
+        <div className="strip mt-4 grid-cols-2 lg:grid-cols-4">
+          <Gauge label="Largest single payment" allowed={money(L.maxPaymentMinor, cur)} pct={share(biggest, L.maxPaymentMinor)} used={`Biggest scheduled ${money(biggest.toString(), cur)}`} />
+          <Gauge label="Largest outflow in a day" allowed={money(L.maxDailyOutflowMinor, cur)} pct={share(today, L.maxDailyOutflowMinor)} used={`Scheduled today ${money(today.toString(), cur)}`} />
+          <Gauge label="Bank balance floor" allowed={money(L.minBankBalanceMinor, cur)} pct={balance ? share(BigInt(L.minBankBalanceMinor), balance) : null} used={balance ? `Bank holds ${money(balance, cur)}` : undefined} line="never projected below" />
+          <Metric label="Second approver above" value={money(L.requireSecondConfirmationAboveMinor, cur)} sub="a different person must sign" />
+        </div>
+      </section>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="What your assistant may do" subtitle={`Valid ${date(m.issuedAt)} to ${date(m.expiresAt)}`}>
           <ul className="space-y-1.5 text-sm">
@@ -77,7 +84,7 @@ export default function MandatePage() {
             <li>New payees: {L.allowNewPayees ? "allowed" : "not allowed. Only payees you approved can be paid."}</li>
           </ul>
         </Card>
-        <Card title="What it may never do" subtitle="Hard stops, whatever the plan says.">
+        <Card title="What it may never do" subtitle="Hard stops, whatever the plan says">
           <ul className="space-y-1.5 text-sm">
             {L.forbiddenPurposes.map((p: string) => <li key={p} className="flex gap-2"><span className="text-danger" aria-hidden>✕</span>Pay {PURPOSE[p] ?? p}</li>)}
             <li className="flex gap-2"><span className="text-danger" aria-hidden>✕</span>Pay a payee whose bank details changed, until you approve them again</li>
@@ -88,38 +95,42 @@ export default function MandatePage() {
         </Card>
       </div>
 
-      <Card tone="danger" title="Try to break it" subtitle="Each button asks the system to do something your limits forbid. Watch it say no, and notice that the refusal is recorded in the evidence log.">
-        <ul className="space-y-3">
-          {attempts.map((a) => (
-            <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white/60 p-3">
-              <div><p className="font-medium">{a.title}</p><p className="text-sm text-ink-soft">{a.expect}</p></div>
-              <Btn variant="danger" busy={busy === a.id} disabled={!a.request} onClick={() => tryIt(a)}>Try it</Btn>
-            </li>
-          ))}
-        </ul>
-        {results.length > 0 && (
-          <div className="mt-4 space-y-2" aria-live="polite">
-            {results.map((r, i) => (
-              <div key={i} className={`rounded-xl border p-3 text-sm ${r.decision === "deny" ? "border-good/40 bg-good-soft" : "border-caution/40 bg-caution-soft"}`}>
-                <p className="flex items-center gap-2"><Chip tone={r.decision === "deny" ? "good" : "caution"}>{r.decision === "deny" ? "blocked, as it should be" : r.decision}</Chip><b>{r.title}</b><span className="ml-auto text-xs text-ink-soft">{r.at}</span></p>
-                <p className="mt-1 text-ink-soft">{r.reasons[0]}</p>
-              </div>
+      <Disclosure title="Test your limits" takeaway="Try to break a rule, run the safety evaluation">
+        <div className="space-y-6">
+        <Card tone="danger" title="Try to break it" subtitle="Each button asks for something your limits forbid. Watch it say no; the refusal is logged.">
+          <ul className="space-y-3">
+            {attempts.map((a) => (
+              <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white/60 p-3">
+                <div><p className="font-medium">{a.title}</p><p className="text-sm text-ink-soft">{a.expect}</p></div>
+                <Btn variant="danger" busy={busy === a.id} disabled={!a.request} onClick={() => tryIt(a)}>Try it</Btn>
+              </li>
             ))}
+          </ul>
+          {results.length > 0 && (
+            <div className="mt-4 space-y-2" aria-live="polite">
+              {results.map((r, i) => (
+                <div key={i} className={`rounded-xl border p-3 text-sm ${r.decision === "deny" ? "border-good/40 bg-good-soft" : "border-caution/40 bg-caution-soft"}`}>
+                  <p className="flex items-center gap-2"><Chip tone={r.decision === "deny" ? "good" : "caution"}>{r.decision === "deny" ? "blocked, as it should be" : r.decision}</Chip><b>{r.title}</b><span className="ml-auto text-xs text-ink-soft">{r.at}</span></p>
+                  <p className="mt-1 text-ink-soft">{r.reasons[0]}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+  
+        <AttackLab />
+  
+        <EvalCard />
+  
+        <Card title="How your signature is protected" subtitle="What is and is not protected today">
+          <ul className="list-disc space-y-1 pl-5 text-sm text-ink-soft">
+            <li>Your signature is made on the server with a <b>test key</b>. Signing needs you signed in, your password again, and (for large payments) a second approver&apos;s password.</li>
+            <li>Because the key is on the server, anyone who controls the server could sign. This setup uses made-up data and no real money. In a live deployment the key would live on your device, for example a passkey or a hardware security key, and the server would only check it.</li>
+            <li>The evidence log is tamper-evident: a changed or deleted record breaks the hash chain, which you can check under Records.</li>
+          </ul>
+        </Card>
           </div>
-        )}
-      </Card>
-
-      <AttackLab />
-
-      <EvalCard />
-
-      <Card title="How your signature is protected" subtitle="What is and is not protected today">
-        <ul className="list-disc space-y-1 pl-5 text-sm text-ink-soft">
-          <li>Your signature is made on the server with a <b>test key</b>. Signing needs you signed in, your password again, and (for large payments) a second approver&apos;s password.</li>
-          <li>Because the key is on the server, anyone who controls the server could sign. This setup uses made-up data and no real money. In a live deployment the key would live on your device, for example a passkey or a hardware security key, and the server would only check it.</li>
-          <li>The evidence log is tamper-evident: a changed or deleted record breaks the hash chain, which you can check under Records.</li>
-        </ul>
-      </Card>
+      </Disclosure>
     </div>
   );
 }

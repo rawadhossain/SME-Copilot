@@ -155,6 +155,20 @@
       "when": 1792315866083,
       "tag": "0021_parched_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792332608900,
+      "tag": "0022_boring_rachel_grey",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792336170418,
+      "tag": "0023_misty_sir_ram",
+      "breakpoints": true
     }
   ]
 }

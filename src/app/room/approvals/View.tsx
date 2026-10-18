@@ -3,7 +3,8 @@
 // Second approvals: plans the owner has already confirmed, waiting for a DIFFERENT person. The approver signs in as themselves, reads exactly
 // what the plan will do, and confirms with their own password. Nobody types another person's password.
 import { useCallback, useEffect, useState } from "react";
-import { Btn, Card, Chip, Empty, ErrorNote, Field, Loading, inputClass } from "@/ui/kit";
+import { Btn, Card, Chip, Disclosure, Empty, ErrorNote, Field, Loading, inputClass, PageHead } from "@/ui/kit";
+import { Icon } from "@/ui/icons";
 import { dateTime } from "@/ui/format";
 import { ScheduleReview } from "@/ui/case/ScheduleReview";
 import { call, useSession } from "@/ui/session";
@@ -24,12 +25,9 @@ export default function Approvals() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="display text-3xl">Approvals</h1>
-        <p className="text-ink-soft">Large plans need two different people. The owner has already confirmed these. {isApprover ? "Read what each one will do, then confirm or decline it with your own password." : "A different approver must confirm them; you cannot give the second approval yourself."}</p>
-      </div>
+      <PageHead title="Approvals" sub={isApprover ? "Read what each plan will do, then confirm or decline" : "A different approver must confirm these"} back={{ href: "/room/case", label: "Plans" }} info="Large plans need two different people. The approver signs in as themselves and confirms with their own password." />
       {msg && <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${msg.tone === "good" ? "border-good/40 bg-good-soft text-good" : "border-danger/40 bg-danger-soft text-danger"}`}>{msg.text}</p>}
-      {list.length === 0 && <Empty title="Nothing is waiting">When the owner signs a plan that needs a second person, it appears here for an approver to confirm.</Empty>}
+      {list.length === 0 && <Empty title="Nothing is waiting">A plan that needs a second person appears here.</Empty>}
       {list.map((p) => <Pending key={p.id} p={p} cur={session.business.currency} isApprover={isApprover} onDone={async (tone, text) => { setMsg({ tone, text }); await load(); }} />)}
     </div>
   );
@@ -52,12 +50,21 @@ function Pending({ p, cur, isApprover, onDone }: { p: any; cur: string; isApprov
   return (
     <Card title="A plan is waiting for a second approval" subtitle={`First confirmed by ${p.firstConfirmedName ?? "the owner"} on ${dateTime(p.firstConfirmedAt)} · expires ${dateTime(p.expiresAt)}`} tone="caution" right={<Chip tone="caution">second approval</Chip>}>
       <div className="space-y-4 text-sm">
+        <ol className="flex items-center gap-2 text-xs" aria-label="Approval steps">
+          <li className="inline-flex items-center gap-1.5 rounded-full bg-good-soft px-2.5 py-1 font-medium text-good"><Icon name="check" size={13} />Owner signed</li>
+          <li aria-hidden className="h-px w-6 bg-line-strong" />
+          <li className="inline-flex items-center gap-1.5 rounded-full bg-caution-soft px-2.5 py-1 font-medium text-caution" aria-current="step"><Icon name="clock" size={13} />Second approver</li>
+          <li aria-hidden className="h-px w-6 bg-line-strong" />
+          <li className="inline-flex items-center gap-1.5 rounded-full bg-neutral-soft px-2.5 py-1 text-ink-soft">Ready to run</li>
+        </ol>
         <section><h3 className="font-medium">What it will ask for</h3>
           <ul className="mt-1 space-y-1.5">{s.asks.map((a: any, i: number) => <li key={i}><b>{a.counterparty}</b>: {a.text} <span className="text-ink-soft">{a.accepts}</span></li>)}</ul></section>
         <ScheduleReview summary={s} cur={cur} />
-        <section><h3 className="font-medium">If everyone agrees</h3><ul className="mt-1 list-disc space-y-1 pl-5">{s.then.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></section>
-        <section><h3 className="font-medium">What it will never do</h3><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-soft">{s.never.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></section>
-        <p className="text-xs text-ink-soft">The plan&apos;s fingerprint is <span className="font-mono">{p.termsHash.slice(0, 12)}…</span>; it is the same one the owner signed, so you are confirming exactly what they saw.</p>
+        <div className="surface divide-y divide-line overflow-hidden">
+          <Disclosure title="If everyone agrees"><ul className="list-disc space-y-1 pl-5">{s.then.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></Disclosure>
+          <Disclosure title="What it will never do"><ul className="list-disc space-y-1 pl-5 text-ink-soft">{s.never.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></Disclosure>
+        </div>
+        <p className="text-xs text-ink-soft">Fingerprint <span className="font-mono">{p.termsHash.slice(0, 12)}…</span>: the same one the owner signed.</p>
         {isApprover && p.canConfirm ? (
           <div className="rounded-lg border border-line bg-white/70 p-3">
             <div className="max-w-sm"><Field label="Your own password"><input className={inputClass} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field></div>

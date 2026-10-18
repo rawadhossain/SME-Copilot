@@ -27,7 +27,7 @@ export function weekWithDates(weeks: any[] | undefined, n: number | null | undef
   return w ? `${week(n)} (${date(w.start)} to ${date(w.end)})` : week(n);
 }
 
-function pictureOf(room: any) {
+export function pictureOf(room: any) {
   const f = room.agreed ?? room.forecast;
   const sh = room.shortage;
   const reason = sh.reason;

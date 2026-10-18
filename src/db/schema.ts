@@ -727,3 +727,81 @@ export const playbookSettings = pgTable("playbook_settings", {
   updatedBy: text("updated_by").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// OWNER AUTOMATIONS. Small flows (trigger, conditions, actions) the owner defines; they can only notify, prepare or draft (src/domain/automation.ts is the
+// closed vocabulary). graph = validated JSON. The app role may insert, delete, and change the editable columns.
+export const automations = pgTable(
+  "automations",
+  {
+    id: id(),
+    businessId: businessId(),
+    name: text("name").notNull(),
+    graph: jsonb("graph").notNull(),
+    version: integer("version").notNull().default(1),
+    status: text("status").notNull().default("draft"), // draft | enabled | disabled
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+    updatedBy: text("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("automations_business_idx").on(t.businessId, t.status), check("automations_status_chk", sql`${t.status} in ('draft', 'enabled', 'disabled')`)],
+);
+
+// One row per run of an automation on one trigger event. node results are [{node, outcome, summary}] with code-template summaries only (no free text).
+// A run that reached a `wait` is "waiting" with resume_on (a business date) and resume_node. Dry runs are returned to the caller and never stored, so
+// dry_run is always false; it exists so a stored row says so on its face. automation_id has no foreign key: history outlives a deleted automation.
+export const automationRuns = pgTable(
+  "automation_runs",
+  {
+    id: id(),
+    businessId: businessId(),
+    automationId: uuid("automation_id").notNull(),
+    automationName: text("automation_name").notNull(),
+    version: integer("version").notNull(),
+    dedupeKey: text("dedupe_key").notNull(), // entity + day
+    entity: text("entity").notNull(),
+    day: date("day").notNull(), // the books' as-of date the run belongs to
+    status: text("status").notNull(), // done | waiting | stopped | failed
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    resumeOn: date("resume_on"),
+    resumeNode: text("resume_node"),
+    results: jsonb("results").notNull().default(sql`'[]'::jsonb`),
+    dryRun: boolean("dry_run").notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex("automation_runs_dedupe_idx").on(t.automationId, t.dedupeKey),
+    index("automation_runs_business_idx").on(t.businessId, t.startedAt),
+    index("automation_runs_waiting_idx").on(t.businessId).where(sql`${t.status} = 'waiting'`),
+    check("automation_runs_status_chk", sql`${t.status} in ('done', 'waiting', 'stopped', 'failed')`),
+    check("automation_runs_dry_chk", sql`${t.dryRun} = false`),
+  ],
+);
+
+// In-app notifications (sandbox only; nothing is emailed). Addressed to one user or to a role. Title and body come from code templates over the books;
+// `note` is the owner's own optional message (data, rendered escaped). read_at and, for a drafted letter, resolution/resolved_at are the only columns that change.
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: id(),
+    businessId: businessId(),
+    userId: uuid("user_id").references(() => ownerUsers.id),
+    role: text("role"), // owner | approver
+    kind: text("kind").notNull(), // notice | digest_item | digest | draft_reminder | simulation | plans_prepared
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    note: text("note"),
+    link: text("link").notNull().default("/room"),
+    automationId: uuid("automation_id"),
+    runId: uuid("run_id"),
+    createdAt: createdAt(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    // A drafted letter the owner has decided on: sent_sandbox (marked sent to the simulated customer) or dismissed. Null = still waiting for the owner.
+    resolution: text("resolution"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("notifications_inbox_idx").on(t.businessId, t.createdAt),
+    check("notifications_to_chk", sql`${t.userId} is not null or ${t.role} in ('owner', 'approver')`),
+  ],
+);

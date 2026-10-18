@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Btn, Card, Chip, Empty, Field, Loading, inputClass, Th, type Tone } from "@/ui/kit";
+import { Btn, Card, Chip, Empty, Field, Loading, inputClass, Th, type Tone, PageHead } from "@/ui/kit";
 import { dateTime } from "@/ui/format";
 import { call, useSession } from "@/ui/session";
 
@@ -92,15 +92,12 @@ export default function Commitments() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="display text-3xl">Orders & quotes</h1>
-        <p className="text-ink-soft">Add a customer order or a supplier quote. It is read and every figure is checked against the text, but nothing counts until <b>you confirm</b> it.</p>
-      </div>
+      <PageHead title="Orders & quotes" sub="Add a customer order or supplier quote" info={<>Figures are checked against the text, and nothing counts until <b>you confirm</b> it.</>} />
       {msg && <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${msg.tone === "good" ? "border-good/40 bg-good-soft text-good" : msg.tone === "danger" ? "border-danger/40 bg-danger-soft text-danger" : "border-line-strong bg-neutral-soft"}`}>{msg.text} {msg.tone === "good" && <Link className="underline" href="/room/case">Open the case</Link>}</p>}
 
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
-          <Card title="Add a document" subtitle="Paste the text of an order or a quote, or choose a text file.">
+          <Card title="Add a document" subtitle="Paste the text, or choose a file.">
             {samples.length > 0 && <details className="mb-4 text-sm"><summary className="cursor-pointer text-accent">Try it with sample documents</summary><div className="mt-3 space-y-2">
               {samples.length > 1 && <Btn busy={busy} onClick={async () => { for (const x of samples) await submit(x.filename, x.kind, x.text); setMsg({ tone: "neutral", text: "Both documents were read. Review each one, then confirm both: your assistant plans once, after the last confirmation." }); }}>Add both sample documents</Btn>}
               {samples.map((s) => <Btn key={s.filename} variant="secondary" className="w-full justify-start" busy={busy} onClick={() => submit(s.filename, s.kind, s.text)}>Use sample: {s.title}</Btn>)}
@@ -126,7 +123,7 @@ export default function Commitments() {
         </div>
 
         <div>
-          {!ex ? <Empty title="Choose a document">Open one from your list to see what was read from it and which figures were checked against the text.</Empty> : (
+          {!ex ? <Empty title="Choose a document">Open one from your list to see what was read.</Empty> : (
             <Card title={open.document.filename} subtitle={`Read by ${ex.model} · prompt ${ex.promptVersion}`} right={<Chip tone={(STATUS[ex.status] ?? ["", "neutral"])[1] as Tone}>{(STATUS[ex.status] ?? [ex.status])[0]}</Chip>}>
               {suspicious.length > 0 && (
                 <div role="alert" className="mb-4 rounded-xl border-2 border-danger/50 bg-danger-soft p-3 text-sm text-danger">
