@@ -46,6 +46,8 @@ export interface AgentToolContext {
   shortage: ShortageReason | null;
   /** Recovery planning only: levers that cannot be proposed because the earlier strategy still has this counterparty's term in force. Never a counterparty refusal. */
   unavailable?: { kind: Lever["kind"]; counterpartyId: string | null; why: string }[];
+  /** Levers the owner switched off in the playbook: left out of planning and the simulator. Only ever narrows what the signed mandate allows. */
+  playbookOff?: Lever["kind"][];
   /** Finance fee assumed when planning (basis points of the invoice). */
   financeFeeBps: number;
   /** Funding offers the owner saved (typed by the owner, validated by code). Absent or empty = the tool is not offered to the model. */

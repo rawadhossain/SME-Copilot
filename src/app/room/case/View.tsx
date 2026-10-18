@@ -161,6 +161,7 @@ function Case() {
         return <div className={`rounded-2xl border p-4 ${tone === "good" ? "border-good/40 bg-good-soft" : tone === "danger" ? "border-danger/40 bg-danger-soft" : tone === "caution" ? "border-caution/40 bg-caution-soft" : "border-accent/30 bg-accent-soft/50"}`}><p className="display text-xl">{head}</p><p className="mt-1 text-sm text-ink-soft">{body}</p></div>;
       })()}
       {error && <ErrorNote>{error}</ErrorNote>}
+      <p className="text-sm"><Link className="text-accent underline" href={`/room/safety?tab=workflow&mode=debug&case=${rootId}`}>See this case on the workflow canvas</Link> <span className="text-ink-soft">(Debug mode)</span></p>
 
       {runs.length > 1 && (
         <div role="tablist" aria-label="Planning rounds" className="flex flex-wrap gap-2">

@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { extractions } from "@/db/schema";
 import { badId, handle, readJson } from "@/actions/http";
 import { checkShortage } from "@/actions/shortage";
+import { loadPlaybook } from "@/actions/playbook";
 import { watchAfter } from "@/actions/monitor";
 import { confirmExtraction } from "@/ingest/documents/confirm";
 
@@ -25,6 +26,7 @@ export async function POST(req: Request, ctx: RouteContext<"/api/extractions/[id
         // Plan once per batch of documents: while another document still waits for the owner, the forecast is incomplete, so wait.
         const waiting = await db.select({ id: extractions.id }).from(extractions).where(and(eq(extractions.businessId, row.businessId), eq(extractions.status, "pending_confirmation"), ne(extractions.id, id)));
         if (waiting.length > 0) shortage = { status: "waiting_for_other_documents", pending: waiting.length };
+        else if (!(await loadPlaybook(db, row.businessId)).autoPrepare) shortage = { status: "auto_prepare_off" }; // playbook: the owner starts planning
         else {
           const r = await checkShortage(db, row.businessId, { source: "commitment_confirmed" });
           shortage = { status: r.status, runId: r.runId, superseded: r.superseded, reason: r.detection.reason };

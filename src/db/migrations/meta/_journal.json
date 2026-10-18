@@ -148,6 +148,13 @@
       "when": 1792265385378,
       "tag": "0020_concerned_luke_cage",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792315866083,
+      "tag": "0021_parched_shadow_king",
+      "breakpoints": true
     }
   ]
 }

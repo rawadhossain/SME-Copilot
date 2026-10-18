@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { Loading } from "@/ui/kit";
+import { WorkflowCanvas } from "@/ui/workflow";
 import Evidence from "../evidence/View";
 import Mandate from "../mandate/View";
 import Scoreboard from "../scoreboard/View";
@@ -12,6 +13,7 @@ const TABS = [
   { id: "results", label: "Results", hint: "What the plans achieved" },
   { id: "limits", label: "Your limits", hint: "What the assistant may and may not do" },
   { id: "records", label: "Records", hint: "Everything that happened, tamper-evident" },
+  { id: "workflow", label: "Workflow", hint: "How the assistant works, and what happened in a case" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -41,6 +43,7 @@ function Tabs() {
         {tab === "results" && <Scoreboard />}
         {tab === "limits" && <Mandate />}
         {tab === "records" && <Evidence />}
+        {tab === "workflow" && <WorkflowCanvas />}
       </div>
     </div>
   );
